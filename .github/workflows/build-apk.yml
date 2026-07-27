@@ -24,6 +24,14 @@ jobs:
           channel: 'stable'
           cache: true
 
+      # Keep the auto-generated debug keystore stable across runs so APK
+      # updates install in place (no uninstall = downloaded models survive).
+      - name: Cache debug keystore (stable APK signature)
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore-v1
+
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos
       - run: flutter test

@@ -236,6 +236,65 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
     }
   }
 
+  /// Mic tap: when more than one model is installed, always ask which one to
+  /// record with (the loaded one is marked); picking a different one loads it
+  /// first, then recording starts.
+  Future<void> _onMicPressed() async {
+    final installedSpecs =
+        modelCatalog.where((s) => _installed[s.id] == true).toList();
+    ModelSpec? chosen = _activeSpec;
+
+    if (installedSpecs.length > 1) {
+      chosen = await showModalBottomSheet<ModelSpec>(
+        context: context,
+        showDragHandle: true,
+        builder: (sheetContext) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Text(
+                  'Transcribe with',
+                  style: Theme.of(sheetContext).textTheme.titleMedium,
+                ),
+              ),
+              for (final spec in installedSpecs)
+                ListTile(
+                  title: Text(spec.displayName),
+                  subtitle: spec.id == _activeSpec?.id
+                      ? const Text('Currently loaded — starts instantly')
+                      : Text(
+                          spec.description,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                  trailing: spec.id == _activeSpec?.id
+                      ? Icon(
+                          Icons.check_circle,
+                          color: Theme.of(sheetContext).colorScheme.primary,
+                        )
+                      : null,
+                  onTap: () => Navigator.pop(sheetContext, spec),
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      );
+      if (chosen == null) return; // sheet dismissed
+    }
+
+    if (chosen == null) return;
+    if (chosen.id != _activeSpec?.id) {
+      await _useModel(chosen);
+      // Only proceed if the switch actually landed in a ready state.
+      if (_phase != Phase.ready || _activeSpec?.id != chosen.id) return;
+    }
+    await _startRecording();
+  }
+
   Future<void> _startRecording() async {
     final transcriber = _transcriber;
     if (transcriber == null) return;
@@ -507,9 +566,13 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
           ),
         ),
         const Spacer(),
-        _BigMicButton(onPressed: () => unawaited(_startRecording())),
+        _BigMicButton(onPressed: () => unawaited(_onMicPressed())),
         const SizedBox(height: 12),
-        const Text('Tap to start transcribing'),
+        Text(
+          modelCatalog.where((s) => _installed[s.id] == true).length > 1
+              ? 'Tap to choose a model & start transcribing'
+              : 'Tap to start transcribing',
+        ),
         const Spacer(),
       ],
     );

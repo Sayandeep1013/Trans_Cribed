@@ -6,24 +6,27 @@ import 'package:path_provider/path_provider.dart';
 
 import 'model_catalog.dart';
 
-/// Resolved on-disk locations the engine needs. Filenames are normalized by
-/// [RemoteFile.localName], so this is identical for every Moonshine variant.
-class ModelPaths {
-  const ModelPaths({
-    required this.preprocessor,
-    required this.encoder,
-    required this.uncachedDecoder,
-    required this.cachedDecoder,
-    required this.tokens,
+/// An installed model resolved to on-disk locations. `files` is keyed by
+/// [RemoteFile.localName], so the engine can look up whatever file set the
+/// model's [EngineType] needs.
+class InstalledModel {
+  const InstalledModel({
+    required this.spec,
+    required this.files,
     required this.sileroVad,
   });
 
-  final String preprocessor;
-  final String encoder;
-  final String uncachedDecoder;
-  final String cachedDecoder;
-  final String tokens;
+  final ModelSpec spec;
+  final Map<String, String> files;
   final String sileroVad;
+
+  String file(String localName) {
+    final path = files[localName];
+    if (path == null) {
+      throw StateError('Model ${spec.id} has no file "$localName"');
+    }
+    return path;
+  }
 }
 
 class DownloadCancelled implements Exception {
@@ -186,15 +189,14 @@ class ModelStore {
     }
   }
 
-  Future<ModelPaths> pathsFor(ModelSpec spec) async {
+  Future<InstalledModel> installedFor(ModelSpec spec) async {
     final dir = await _dirFor(spec.id);
-    String p(String name) => '${dir.path}${Platform.pathSeparator}$name';
-    return ModelPaths(
-      preprocessor: p('preprocess.onnx'),
-      encoder: p('encode.onnx'),
-      uncachedDecoder: p('uncached_decode.onnx'),
-      cachedDecoder: p('cached_decode.onnx'),
-      tokens: p('tokens.txt'),
+    return InstalledModel(
+      spec: spec,
+      files: {
+        for (final f in spec.files)
+          f.localName: '${dir.path}${Platform.pathSeparator}${f.localName}',
+      },
       sileroVad: (await _vadTarget()).path,
     );
   }

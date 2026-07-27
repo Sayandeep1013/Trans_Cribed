@@ -10,8 +10,8 @@
 
 | Decision | Value | Spec ref |
 |---|---|---|
-| Engine | **sherpa-onnx** (`sherpa_onnx` Flutter package, ONNX Runtime + XNNPACK CPU) | §6 |
-| Model | **Moonshine base, English, INT8** (workflow switch for **tiny**) | §6, §10b |
+| Engine | **sherpa-onnx** (`sherpa_onnx` Flutter package, ONNX Runtime + XNNPACK CPU), hosted in a dedicated background isolate | §6 |
+| Models | **Catalog** (in-app download): Moonshine base/tiny INT8 (English) + **NVIDIA Parakeet TDT 0.6B v2 INT8** (max accuracy, flagship phones) | §6, §10b, §19 |
 | VAD | **Silero VAD** via sherpa-onnx, utterance-gated | §6, §11 |
 | Streaming granularity | **Per-utterance captions** (text appears at natural pauses, ~1–3 s) | §15 default |
 | Decode | Greedy, 2 threads | §13 |
@@ -41,7 +41,7 @@ lib/
 │   └── model_store.dart                       # ★ download-once-and-cache store (progress, cancel, resume, delete)
 ├── transcriber/
 │   ├── transcriber.dart                       # ★ THE INTERFACE — copied to the main app unchanged
-│   └── sherpa_moonshine_transcriber.dart      # ★ engine implementation — takes ModelPaths, works for any Moonshine variant
+│   └── sherpa_onnx_transcriber.dart           # ★ engine in a background isolate; Moonshine + NeMo transducer (Parakeet)
 ├── audio/
 │   └── mic_capture.dart                       # ★ record pkg, 16 kHz mono PCM16 → Float32
 └── util/
@@ -53,7 +53,7 @@ lib/
 
 **Interface contract** (`Transcriber`): `prepare() → TranscriberStats` / `start()` / `Stream<TranscriptSegment> segments` / `stop() → TranscriptResult` / `dispose()`. `TranscriptResult.durationSeconds` exists specifically because the main app must send `duration_seconds` in `POST /api/notes/sync`.
 
-**Known simplification:** decoding runs on the main isolate (as the official sherpa-onnx Flutter examples do). Utterances are short so stalls are small; the production integration moves the engine into a long-lived background isolate (integration doc item).
+**Responsiveness design:** the entire engine (load, warmup, VAD, decode) lives in a **long-lived background isolate** — the UI thread never blocks, so loaders animate during model load and Stop finalizes behind a live "Finalizing…" spinner instead of freezing. The UI additionally gets `audioLevel` (mic RMS pulse) and `speechActive` ("Transcribing…" pending bubble) streams from the interface so the screen reacts the instant the user speaks, before the first caption lands. Utterances are capped at 8 s (`maxSpeechDuration`) so captions arrive on a steady rhythm even in pause-free monologues. Accuracy levers on by default: platform voice processing (AGC + noise suppression + echo cancel) on capture — clean input beats a bigger model (§13) — and the Parakeet catalog entry for phones that can carry it.
 
 ## 5. Model delivery — in-app download-and-cache
 
@@ -96,7 +96,7 @@ When the demo passes §7, the integration doc for the main-app dev will contain:
 3. **Wiring:** one `Transcriber` instance provided app-wide; `prepare()` in the background *after* first frame (never blocking `runApp` — findings CORE-3); record page consumes `segments` for live captions; `stop()` result feeds the existing note-save flow **including `durationSeconds`** (findings SYNC-10).
 4. **Feature flag:** wrap the legacy `WhisperService` in the same `Transcriber` interface; flag chooses the engine; remove whisper.cpp + the 181 MB bundled model only after the new path wins in production (§17.10).
 5. **Foreground service:** engine hooks into the main app's recording service (findings UI-1) — start/stop tied to service lifecycle, transcript segments persisted incrementally (§16).
-6. **Engine isolate:** move decode off the main isolate.
+6. **Engine isolate:** already implemented in the demo — carries over as-is.
 7. **Model distribution decision:** bundle-tiny vs download-base per device tier (§12/§20), replacing `model_assets.dart` internals only.
 8. **Proguard/R8:** keep rules for sherpa-onnx JNI if minification is enabled (findings AND-4).
 9. **Benchmark numbers per device** from §7 as the regression baseline.

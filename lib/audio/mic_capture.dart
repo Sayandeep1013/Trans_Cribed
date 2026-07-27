@@ -6,8 +6,9 @@ import 'package:record/record.dart';
 import '../util/pcm.dart';
 
 /// Thin wrapper over the `record` package: 16 kHz mono PCM16 stream converted
-/// to Float32 frames. Same package and config as the main Picaku app, minus
-/// the DSP flags (kept default here; tune during benchmarking).
+/// to Float32 frames. Same package as the main Picaku app, with the platform
+/// voice-processing DSP enabled (AGC + noise suppression + echo cancel) -
+/// clean input beats a bigger model for accuracy (spec section 13).
 class MicCapture {
   final AudioRecorder _recorder = AudioRecorder();
   StreamSubscription<Uint8List>? _sub;
@@ -23,6 +24,9 @@ class MicCapture {
         encoder: AudioEncoder.pcm16bits,
         sampleRate: sampleRate,
         numChannels: 1,
+        autoGain: true,
+        echoCancel: true,
+        noiseSuppress: true,
       ),
     );
     _sub = stream.listen((bytes) => onFrame(pcm16leToFloat32(bytes)));

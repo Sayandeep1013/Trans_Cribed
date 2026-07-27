@@ -6,7 +6,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'models/model_catalog.dart';
 import 'models/model_store.dart';
-import 'transcriber/sherpa_moonshine_transcriber.dart';
+import 'transcriber/sherpa_onnx_transcriber.dart';
 import 'transcriber/transcriber.dart';
 
 void main() {
@@ -63,6 +63,11 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
   ModelSpec? _activeSpec;
   Transcriber? _transcriber;
   StreamSubscription<TranscriptSegment>? _segmentSub;
+  StreamSubscription<double>? _levelSub;
+  StreamSubscription<bool>? _speechSub;
+  double _level = 0;
+  bool _speechActive = false;
+  bool _showTimestamps = false;
 
   DownloadProgress? _downloadProgress;
   ModelSpec? _downloadingSpec;
@@ -86,6 +91,8 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
   void dispose() {
     _clockTimer?.cancel();
     unawaited(_segmentSub?.cancel());
+    unawaited(_levelSub?.cancel());
+    unawaited(_speechSub?.cancel());
     unawaited(WakelockPlus.disable());
     unawaited(_transcriber?.dispose());
     super.dispose();
@@ -160,13 +167,33 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
     }
     try {
       await _segmentSub?.cancel();
+      await _levelSub?.cancel();
+      await _speechSub?.cancel();
       await _transcriber?.dispose();
 
-      final paths = await _store.pathsFor(spec);
-      final transcriber = SherpaMoonshineTranscriber(paths: paths);
-      _segmentSub = transcriber.segments.listen((segment) {
-        if (!mounted) return;
-        setState(() => _liveSegments.insert(0, segment));
+      final installed = await _store.installedFor(spec);
+      final transcriber = SherpaOnnxTranscriber(model: installed);
+      _segmentSub = transcriber.segments.listen(
+        (segment) {
+          if (!mounted) return;
+          setState(() => _liveSegments.insert(0, segment));
+        },
+        onError: (Object e) {
+          if (!mounted) return;
+          setState(() {
+            _phase = Phase.error;
+            _micDenied = false;
+            _errorMessage = 'Engine error during session: $e';
+          });
+        },
+      );
+      _levelSub = transcriber.audioLevel.listen((level) {
+        if (mounted && _phase == Phase.recording) {
+          setState(() => _level = level);
+        }
+      });
+      _speechSub = transcriber.speechActive.listen((active) {
+        if (mounted) setState(() => _speechActive = active);
       });
 
       final stats = await transcriber.prepare(
@@ -311,8 +338,16 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
             Phase.preparing => _buildPreparing(),
             Phase.ready => _buildReady(),
             Phase.recording => _buildRecording(),
-            Phase.finalizing =>
-              const Center(child: CircularProgressIndicator()),
+            Phase.finalizing => const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text('Finalizing transcript…'),
+                  ],
+                ),
+              ),
             Phase.done => _buildDone(),
             Phase.error => _buildError(),
           },
@@ -481,12 +516,32 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
   }
 
   Widget _buildRecording() {
+    final scheme = Theme.of(context).colorScheme;
+    // Pending "speaking" bubble occupies slot 0 while the VAD hears speech,
+    // so the screen reacts instantly - captions finalize at pauses.
+    final pendingSlot = _speechActive ? 1 : 0;
     return Column(
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.fiber_manual_record, color: Colors.redAccent),
+            // Level-driven pulse: proves the app hears you before any text.
+            SizedBox(
+              width: 36,
+              height: 36,
+              child: Center(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 100),
+                  width: 12 + 24 * _level,
+                  height: 12 + 24 * _level,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.redAccent
+                        .withValues(alpha: 0.35 + 0.65 * _level),
+                  ),
+                ),
+              ),
+            ),
             const SizedBox(width: 8),
             Text(
               _formatDuration(_elapsed),
@@ -496,18 +551,37 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
         ),
         const SizedBox(height: 16),
         Expanded(
-          child: _liveSegments.isEmpty
+          child: _liveSegments.isEmpty && !_speechActive
               ? Center(
                   child: Text(
-                    'Listening… captions appear at natural pauses.',
+                    'Listening… speak and captions appear at pauses.',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                 )
               : ListView.builder(
                   reverse: true,
-                  itemCount: _liveSegments.length,
+                  itemCount: _liveSegments.length + pendingSlot,
                   itemBuilder: (context, index) {
-                    final s = _liveSegments[index];
+                    if (_speechActive && index == 0) {
+                      return Card(
+                        color: scheme.surfaceContainerHighest,
+                        child: ListTile(
+                          leading: const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child:
+                                CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          title: Text(
+                            'Transcribing…',
+                            style: TextStyle(color: scheme.onSurfaceVariant),
+                          ),
+                          subtitle:
+                              Text('started ${_formatDuration(_elapsed)}'),
+                        ),
+                      );
+                    }
+                    final s = _liveSegments[index - pendingSlot];
                     return Card(
                       child: ListTile(
                         title: Text(s.text),
@@ -565,18 +639,61 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
           },
         ),
         const SizedBox(height: 12),
+        SegmentedButton<bool>(
+          segments: const [
+            ButtonSegment(value: false, label: Text('Plain')),
+            ButtonSegment(value: true, label: Text('Timestamped')),
+          ],
+          selected: {_showTimestamps},
+          onSelectionChanged: (selection) =>
+              setState(() => _showTimestamps = selection.first),
+        ),
+        const SizedBox(height: 8),
         Expanded(
           child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: SingleChildScrollView(
-                child: SelectableText(
-                  result.text.isEmpty
-                      ? '(no speech detected)'
-                      : result.text,
-                ),
-              ),
-            ),
+            child: _showTimestamps
+                ? ListView.builder(
+                    padding: const EdgeInsets.all(8),
+                    itemCount: result.segments.length,
+                    itemBuilder: (context, index) {
+                      final s = result.segments[index];
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 6,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${_formatDuration(s.start)} - '
+                              '${_formatDuration(s.end)}',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .primary,
+                                  ),
+                            ),
+                            const SizedBox(height: 2),
+                            SelectableText(s.text),
+                          ],
+                        ),
+                      );
+                    },
+                  )
+                : Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: SingleChildScrollView(
+                      child: SelectableText(
+                        result.text.isEmpty
+                            ? '(no speech detected)'
+                            : result.text,
+                      ),
+                    ),
+                  ),
           ),
         ),
         const SizedBox(height: 12),

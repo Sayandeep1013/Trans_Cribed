@@ -75,7 +75,16 @@ abstract class Transcriber {
   bool get isRecording;
 
   /// Live captions: emits each finalized utterance while recording.
+  /// Errors on this stream are engine failures during a session.
   Stream<TranscriptSegment> get segments;
+
+  /// Microphone level (RMS, 0..1), throttled to ~10 Hz while recording.
+  /// Drives "the app hears you" UI so captions never feel dead.
+  Stream<double> get audioLevel;
+
+  /// True while the VAD detects ongoing speech (an utterance is being
+  /// captured but not yet finalized). Drives a "transcribing…" pending UI.
+  Stream<bool> get speechActive;
 
   /// Start capturing and transcribing. Throws [StateError] if not prepared,
   /// [MicPermissionDeniedException] if the mic permission is missing.

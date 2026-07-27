@@ -1,8 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- The only permission this app needs. There is deliberately NO internet
-         permission in release: transcription is fully on-device, and the APK
-         proves it - audio and text physically cannot leave the phone. -->
+    <!-- RECORD_AUDIO for capture; INTERNET only for the one-time in-app model
+         download. Transcription itself is fully on-device and offline - audio
+         and transcript text never leave the phone. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:label="Picaku STT Demo"

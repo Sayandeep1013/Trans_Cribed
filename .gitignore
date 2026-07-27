@@ -6,12 +6,6 @@ build/
 .flutter-plugins-dependencies
 *.log
 
-# Models are downloaded by CI / scripts/get_models.ps1 - never committed.
-assets/models/moonshine/*
-assets/models/vad/*
-!assets/models/moonshine/.gitkeep
-!assets/models/vad/.gitkeep
-
 # Android
 **/android/key.properties
 **/android/**/*.jks

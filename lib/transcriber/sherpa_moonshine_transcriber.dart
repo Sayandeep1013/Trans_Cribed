@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
 import '../audio/mic_capture.dart';
-import 'model_assets.dart';
+import '../models/model_store.dart';
 import 'transcriber.dart';
 
 /// sherpa-onnx + Moonshine INT8 + Silero VAD implementation of [Transcriber].
@@ -21,8 +21,11 @@ import 'transcriber.dart';
 /// tens to hundreds of ms. The production integration should move the engine
 /// into a long-lived background isolate - noted in the integration plan.
 class SherpaMoonshineTranscriber implements Transcriber {
-  SherpaMoonshineTranscriber({this.numThreads = 2});
+  SherpaMoonshineTranscriber({required this.paths, this.numThreads = 2});
 
+  /// Locations of the model files (installed by [ModelStore]). Every
+  /// Moonshine variant works here unchanged - only these paths differ.
+  final ModelPaths paths;
   final int numThreads;
 
   static const int _sampleRate = MicCapture.sampleRate;
@@ -63,9 +66,6 @@ class SherpaMoonshineTranscriber implements Transcriber {
         warmup: Duration.zero,
       );
     }
-
-    onProgress?.call('Extracting models…');
-    final paths = await extractModelAssets(onProgress: onProgress);
 
     onProgress?.call('Loading Moonshine…');
     final loadWatch = Stopwatch()..start();

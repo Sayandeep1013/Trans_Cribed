@@ -3,14 +3,7 @@ name: Build Demo APK
 on:
   push:
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      model:
-        description: 'Moonshine model size'
-        required: false
-        default: 'base'
-        type: choice
-        options: [base, tiny]
+  workflow_dispatch: {}
 
 jobs:
   build:
@@ -31,26 +24,6 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Download models (Moonshine ${{ inputs.model || 'base' }} INT8 + Silero VAD)
-        env:
-          MODEL: ${{ inputs.model || 'base' }}
-        run: |
-          set -euo pipefail
-          mkdir -p assets/models/moonshine assets/models/vad
-          curl -fsSL -o moonshine.tar.bz2 \
-            "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-${MODEL}-en-int8.tar.bz2"
-          tar xjf moonshine.tar.bz2
-          d="sherpa-onnx-moonshine-${MODEL}-en-int8"
-          # Normalize filenames so the Dart code is identical for tiny/base.
-          cp "$d/preprocess.onnx"           assets/models/moonshine/preprocess.onnx
-          cp "$d/encode.int8.onnx"          assets/models/moonshine/encode.onnx
-          cp "$d/uncached_decode.int8.onnx" assets/models/moonshine/uncached_decode.onnx
-          cp "$d/cached_decode.int8.onnx"   assets/models/moonshine/cached_decode.onnx
-          cp "$d/tokens.txt"                assets/models/moonshine/tokens.txt
-          curl -fsSL -o assets/models/vad/silero_vad.onnx \
-            "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
-          ls -lh assets/models/moonshine assets/models/vad
-
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos
       - run: flutter test
@@ -60,7 +33,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: picaku-stt-demo-${{ inputs.model || 'base' }}
+          name: picaku-stt-demo
           path: |
             build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk

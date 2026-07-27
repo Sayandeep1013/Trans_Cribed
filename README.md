@@ -1,6 +1,8 @@
 # Picaku STT Demo
 
-Standalone spike app: **on-device English transcription** with sherpa-onnx + Moonshine INT8 + Silero VAD. Live captions while you speak, final transcript + performance metrics when you stop. Fully offline — the release build has no internet permission at all.
+Standalone spike app: **on-device English transcription** with sherpa-onnx + Moonshine INT8 + Silero VAD. Live captions while you speak, final transcript + performance metrics when you stop.
+
+The APK is small (~35 MB): models are **downloaded in-app** from a catalog (Moonshine base ~170 MB / tiny ~75 MB, plus a shared 2 MB Silero VAD) with progress, cancel, resume, switch, and delete. Internet is used **only** for that one-time download — transcription runs fully offline and no weights are ever trained or modified on device.
 
 Validates the engine from `ON_DEVICE_TRANSCRIPTION.md` before it is integrated into the main Picaku app. See **DEMO_SPEC.md** for scope, architecture, and acceptance criteria.
 
@@ -15,14 +17,14 @@ Validates the engine from `ON_DEVICE_TRANSCRIPTION.md` before it is integrated i
    git remote add origin https://github.com/<you>/picaku-stt-demo.git
    git push -u origin main
    ```
-2. The **Build Demo APK** workflow runs automatically (or trigger it from the Actions tab — there you can pick Moonshine **base** or **tiny**). It downloads the models, runs `flutter analyze` + `flutter test`, and builds the APK. First run ≈ 10–15 min; cached runs are faster.
-3. Download the `picaku-stt-demo-base` artifact from the run page, copy **`app-arm64-v8a-release.apk`** to your phone, and install it (allow "install unknown apps" once). It's debug-signed on purpose — no keystore setup, installs anywhere.
+2. The **Build Demo APK** workflow runs automatically (or trigger it from the Actions tab). It runs `flutter analyze` + `flutter test` and builds the APK. First run ≈ 10–15 min; cached runs are faster.
+3. Download the `picaku-stt-demo` artifact from the run page, copy **`app-arm64-v8a-release.apk`** to your phone, and install it (allow "install unknown apps" once). It's debug-signed on purpose — no keystore setup, installs anywhere.
 
 > If the very first run fails on `flutter analyze` with sherpa_onnx API mismatches, that's the expected verification gate (see DEMO_SPEC.md §9) — paste the log to Claude and it's a small fix + push.
 
 ## Use it
 
-Open the app → it loads + warms up the model once (timings shown) → tap the mic → speak → captions appear at natural pauses with per-segment RTF → tap **Stop** → full transcript + session metrics (avg RTF target **< 0.3**) → **Copy** to export.
+Open the app → pick a model in the catalog and **Download** it (Wi-Fi recommended; progress shown, cancel/resume supported) → it loads + warms up (timings shown) → tap the mic → speak → captions appear at natural pauses with per-segment RTF → tap **Stop** → full transcript + session metrics (avg RTF target **< 0.3**) → **Copy** to export. Use **Switch model** to A/B base vs tiny on the same speech.
 
 Test on at least one budget phone (3–4 GB RAM) and one good phone, and note the numbers — they feed the integration doc.
 
@@ -31,7 +33,6 @@ Test on at least one budget phone (3–4 GB RAM) and one good phone, and note th
 Only the Flutter SDK is required (no Android Studio / Android SDK, per `FLUTTER_CLEAN_CLOUD_DEV.md`):
 
 ```powershell
-pwsh ./scripts/get_models.ps1        # fetch models into assets/ (CI does this itself)
 flutter pub get
 flutter analyze
 flutter test
@@ -40,10 +41,11 @@ flutter test
 ## Layout
 
 ```
-lib/transcriber/   Transcriber interface + sherpa-onnx/Moonshine engine  ← the handoff modules
+lib/models/        model catalog + download-once-and-cache store  ← handoff modules
+lib/transcriber/   Transcriber interface + sherpa-onnx/Moonshine engine  ← handoff modules
 lib/audio/         mic capture (record pkg, 16 kHz mono PCM16)
 lib/util/          PCM conversion
-lib/main.dart      throwaway demo UI + metrics
+lib/main.dart      throwaway demo UI (catalog + record + metrics)
 android/           shell copied from the main Picaku app (same toolchain), signing fixed
-.github/workflows/ cloud build: models + analyze + test + APK artifact
+.github/workflows/ cloud build: analyze + test + APK artifact (no models in the build)
 ```

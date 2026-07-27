@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import 'models/model_catalog.dart';
+import 'models/model_store.dart';
 import 'transcriber/sherpa_moonshine_transcriber.dart';
 import 'transcriber/transcriber.dart';
 
@@ -31,7 +33,16 @@ class DemoApp extends StatelessWidget {
   }
 }
 
-enum Phase { preparing, ready, recording, finalizing, done, error }
+enum Phase {
+  catalog,
+  downloading,
+  preparing,
+  ready,
+  recording,
+  finalizing,
+  done,
+  error,
+}
 
 class TranscribeDemoPage extends StatefulWidget {
   const TranscribeDemoPage({super.key});
@@ -41,18 +52,25 @@ class TranscribeDemoPage extends StatefulWidget {
 }
 
 class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
-  // Singleton for the app's lifetime - prepared once, reused every session.
-  final Transcriber _transcriber = SherpaMoonshineTranscriber();
+  final ModelStore _store = ModelStore();
 
-  Phase _phase = Phase.preparing;
+  Phase _phase = Phase.catalog;
   String _stage = 'Starting…';
   String _errorMessage = '';
   bool _micDenied = false;
 
+  Map<String, bool> _installed = {};
+  ModelSpec? _activeSpec;
+  Transcriber? _transcriber;
+  StreamSubscription<TranscriptSegment>? _segmentSub;
+
+  DownloadProgress? _downloadProgress;
+  ModelSpec? _downloadingSpec;
+  bool _cancelRequested = false;
+
   TranscriberStats? _stats;
   TranscriptResult? _result;
   final List<TranscriptSegment> _liveSegments = [];
-  StreamSubscription<TranscriptSegment>? _segmentSub;
 
   DateTime? _recordingStartedAt;
   Timer? _clockTimer;
@@ -61,11 +79,7 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
   @override
   void initState() {
     super.initState();
-    _segmentSub = _transcriber.segments.listen((segment) {
-      if (!mounted) return;
-      setState(() => _liveSegments.insert(0, segment));
-    });
-    unawaited(_prepare());
+    unawaited(_initModels());
   }
 
   @override
@@ -73,23 +87,98 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
     _clockTimer?.cancel();
     unawaited(_segmentSub?.cancel());
     unawaited(WakelockPlus.disable());
-    unawaited(_transcriber.dispose());
+    unawaited(_transcriber?.dispose());
     super.dispose();
   }
 
-  Future<void> _prepare() async {
+  Future<void> _initModels() async {
+    await _refreshInstalled();
+    final selectedId = await _store.getSelectedModelId();
+    ModelSpec? toUse;
+    for (final spec in modelCatalog) {
+      if (_installed[spec.id] == true &&
+          (toUse == null || spec.id == selectedId)) {
+        toUse = spec;
+      }
+    }
+    if (toUse != null) {
+      await _useModel(toUse);
+    } else {
+      if (mounted) setState(() => _phase = Phase.catalog);
+    }
+  }
+
+  Future<void> _refreshInstalled() async {
+    final installed = <String, bool>{};
+    for (final spec in modelCatalog) {
+      installed[spec.id] = await _store.isInstalled(spec);
+    }
+    if (mounted) setState(() => _installed = installed);
+  }
+
+  Future<void> _downloadModel(ModelSpec spec) async {
     setState(() {
-      _phase = Phase.preparing;
-      _stage = 'Starting…';
+      _phase = Phase.downloading;
+      _downloadingSpec = spec;
+      _downloadProgress = null;
+      _cancelRequested = false;
     });
+    await WakelockPlus.enable();
     try {
-      final stats = await _transcriber.prepare(
+      await _store.download(
+        spec,
+        onProgress: (progress) {
+          if (mounted) setState(() => _downloadProgress = progress);
+        },
+        isCancelled: () => _cancelRequested,
+      );
+      await _refreshInstalled();
+      await _store.setSelectedModelId(spec.id);
+      await _useModel(spec);
+    } on DownloadCancelled {
+      if (mounted) setState(() => _phase = Phase.catalog);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _phase = Phase.error;
+        _micDenied = false;
+        _errorMessage =
+            'Download failed: $e\n\nCheck your connection and retry - '
+            'finished files are kept, so it resumes where it stopped.';
+      });
+    } finally {
+      if (_phase != Phase.recording) await WakelockPlus.disable();
+    }
+  }
+
+  Future<void> _useModel(ModelSpec spec) async {
+    if (mounted) {
+      setState(() {
+        _phase = Phase.preparing;
+        _stage = 'Loading ${spec.displayName}…';
+      });
+    }
+    try {
+      await _segmentSub?.cancel();
+      await _transcriber?.dispose();
+
+      final paths = await _store.pathsFor(spec);
+      final transcriber = SherpaMoonshineTranscriber(paths: paths);
+      _segmentSub = transcriber.segments.listen((segment) {
+        if (!mounted) return;
+        setState(() => _liveSegments.insert(0, segment));
+      });
+
+      final stats = await transcriber.prepare(
         onProgress: (stage) {
           if (mounted) setState(() => _stage = stage);
         },
       );
+      await _store.setSelectedModelId(spec.id);
       if (!mounted) return;
       setState(() {
+        _transcriber = transcriber;
+        _activeSpec = spec;
         _stats = stats;
         _phase = Phase.ready;
       });
@@ -103,13 +192,31 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
     }
   }
 
+  Future<void> _deleteModel(ModelSpec spec) async {
+    if (_activeSpec?.id == spec.id) {
+      await _segmentSub?.cancel();
+      _segmentSub = null;
+      await _transcriber?.dispose();
+      _transcriber = null;
+      _activeSpec = null;
+    }
+    await _store.delete(spec);
+    await _refreshInstalled();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${spec.displayName} deleted')),
+      );
+    }
+  }
+
   Future<void> _startRecording() async {
+    final transcriber = _transcriber;
+    if (transcriber == null) return;
     try {
       _liveSegments.clear();
-      await _transcriber.start();
+      await transcriber.start();
       await WakelockPlus.enable();
       _recordingStartedAt = DateTime.now();
-      // Wall-clock based elapsed time - immune to timer throttling.
       _clockTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
         final startedAt = _recordingStartedAt;
         if (startedAt == null || !mounted) return;
@@ -137,12 +244,14 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
   }
 
   Future<void> _stopRecording() async {
+    final transcriber = _transcriber;
+    if (transcriber == null) return;
     _clockTimer?.cancel();
     _clockTimer = null;
     await WakelockPlus.disable();
     setState(() => _phase = Phase.finalizing);
     try {
-      final result = await _transcriber.stop();
+      final result = await transcriber.stop();
       if (!mounted) return;
       setState(() {
         _result = result;
@@ -172,7 +281,7 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
       _result = null;
       _liveSegments.clear();
       _elapsed = Duration.zero;
-      _phase = Phase.ready;
+      _phase = _transcriber == null ? Phase.catalog : Phase.ready;
     });
   }
 
@@ -186,7 +295,7 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
             padding: const EdgeInsets.only(right: 16),
             child: Center(
               child: Text(
-                'on-device · offline',
+                'on-device STT',
                 style: Theme.of(context).textTheme.labelSmall,
               ),
             ),
@@ -197,14 +306,137 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: switch (_phase) {
+            Phase.catalog => _buildCatalog(),
+            Phase.downloading => _buildDownloading(),
             Phase.preparing => _buildPreparing(),
             Phase.ready => _buildReady(),
             Phase.recording => _buildRecording(),
-            Phase.finalizing => _buildFinalizing(),
+            Phase.finalizing =>
+              const Center(child: CircularProgressIndicator()),
             Phase.done => _buildDone(),
             Phase.error => _buildError(),
           },
         ),
+      ),
+    );
+  }
+
+  Widget _buildCatalog() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Models', style: Theme.of(context).textTheme.titleLarge),
+        const SizedBox(height: 4),
+        Text(
+          'Download once (Wi-Fi recommended). Transcription itself runs '
+          'fully offline - audio never leaves this phone, and no model is '
+          'ever trained or modified on device.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: ListView(
+            children: [
+              for (final spec in modelCatalog)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                spec.displayName,
+                                style:
+                                    Theme.of(context).textTheme.titleMedium,
+                              ),
+                            ),
+                            if (_installed[spec.id] == true)
+                              const Chip(
+                                label: Text('Installed'),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${spec.description}  ·  ~${spec.approxMb} MB',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            if (_installed[spec.id] == true) ...[
+                              FilledButton(
+                                onPressed: () => unawaited(_useModel(spec)),
+                                child: Text(
+                                  _activeSpec?.id == spec.id
+                                      ? 'Continue'
+                                      : 'Use',
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton(
+                                onPressed: () =>
+                                    unawaited(_deleteModel(spec)),
+                                child: const Text('Delete'),
+                              ),
+                            ] else
+                              FilledButton.icon(
+                                onPressed: () =>
+                                    unawaited(_downloadModel(spec)),
+                                icon: const Icon(Icons.download),
+                                label: const Text('Download'),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDownloading() {
+    final progress = _downloadProgress;
+    final spec = _downloadingSpec;
+    final mb = progress == null
+        ? ''
+        : '${(progress.receivedBytes / 1048576).toStringAsFixed(1)} MB'
+            '${progress.totalBytes != null ? ' / ${(progress.totalBytes! / 1048576).toStringAsFixed(1)} MB' : ''}';
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Downloading ${spec?.displayName ?? 'model'}…',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 16),
+          LinearProgressIndicator(value: progress?.fileFraction),
+          const SizedBox(height: 12),
+          Text(
+            progress == null
+                ? 'Connecting…'
+                : '${progress.fileName} '
+                    '(${progress.fileIndex}/${progress.fileCount})\n$mb',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 24),
+          OutlinedButton(
+            onPressed: () => setState(() => _cancelRequested = true),
+            child: const Text('Cancel'),
+          ),
+        ],
       ),
     );
   }
@@ -217,11 +449,6 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
           const CircularProgressIndicator(),
           const SizedBox(height: 24),
           Text(_stage, style: Theme.of(context).textTheme.bodyLarge),
-          const SizedBox(height: 8),
-          Text(
-            'One-time setup on first launch; instant afterwards.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
         ],
       ),
     );
@@ -231,16 +458,21 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
     final stats = _stats;
     return Column(
       children: [
-        if (stats != null)
-          _MetricsCard(
-            title: 'Engine ready',
-            rows: {
+        _MetricsCard(
+          title: 'Engine ready — ${_activeSpec?.displayName ?? ''}',
+          rows: {
+            if (stats != null) ...{
               'Model load': '${stats.modelLoad.inMilliseconds} ms',
               'Warmup inference': '${stats.warmup.inMilliseconds} ms',
             },
+          },
+          trailing: TextButton(
+            onPressed: () => setState(() => _phase = Phase.catalog),
+            child: const Text('Switch model'),
           ),
+        ),
         const Spacer(),
-        _BigMicButton(onPressed: _startRecording),
+        _BigMicButton(onPressed: () => unawaited(_startRecording())),
         const SizedBox(height: 12),
         const Text('Tap to start transcribing'),
         const Spacer(),
@@ -291,7 +523,7 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
         ),
         const SizedBox(height: 16),
         FilledButton.icon(
-          onPressed: _stopRecording,
+          onPressed: () => unawaited(_stopRecording()),
           icon: const Icon(Icons.stop),
           label: const Text('Stop'),
           style: FilledButton.styleFrom(
@@ -300,10 +532,6 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
         ),
       ],
     );
-  }
-
-  Widget _buildFinalizing() {
-    return const Center(child: CircularProgressIndicator());
   }
 
   Widget _buildDone() {
@@ -327,7 +555,7 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _MetricsCard(
-          title: 'Session metrics',
+          title: 'Session metrics — ${_activeSpec?.displayName ?? ''}',
           rows: {
             'Audio duration':
                 '${result.durationSeconds.toStringAsFixed(1)} s',
@@ -356,7 +584,7 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
           children: [
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: _copyTranscript,
+                onPressed: () => unawaited(_copyTranscript()),
                 icon: const Icon(Icons.copy),
                 label: const Text('Copy'),
               ),
@@ -389,10 +617,10 @@ class _TranscribeDemoPageState extends State<TranscribeDemoPage> {
           const SizedBox(height: 24),
           FilledButton(
             onPressed: () {
-              if (_micDenied || _transcriber.isReady) {
+              if (_micDenied || _transcriber != null) {
                 _newSession();
               } else {
-                unawaited(_prepare());
+                setState(() => _phase = Phase.catalog);
               }
             },
             child: const Text('Retry'),
@@ -433,10 +661,11 @@ class _BigMicButton extends StatelessWidget {
 }
 
 class _MetricsCard extends StatelessWidget {
-  const _MetricsCard({required this.title, required this.rows});
+  const _MetricsCard({required this.title, required this.rows, this.trailing});
 
   final String title;
   final Map<String, String> rows;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -447,7 +676,12 @@ class _MetricsCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: textTheme.titleMedium),
+            Row(
+              children: [
+                Expanded(child: Text(title, style: textTheme.titleMedium)),
+                if (trailing != null) trailing!,
+              ],
+            ),
             const SizedBox(height: 8),
             for (final entry in rows.entries)
               Padding(

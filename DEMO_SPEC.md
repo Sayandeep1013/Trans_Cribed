@@ -35,11 +35,13 @@
 
 ```
 lib/
-├── main.dart                                  # single-screen demo UI + metrics display
+├── main.dart                                  # demo UI: model catalog + record screen + metrics (throwaway)
+├── models/
+│   ├── model_catalog.dart                     # ★ downloadable-model registry (id, URLs, sizes)
+│   └── model_store.dart                       # ★ download-once-and-cache store (progress, cancel, resume, delete)
 ├── transcriber/
 │   ├── transcriber.dart                       # ★ THE INTERFACE — copied to the main app unchanged
-│   ├── sherpa_moonshine_transcriber.dart      # ★ engine implementation — copied to the main app
-│   └── model_assets.dart                      # asset→file extraction (main app may replace with download-and-cache)
+│   └── sherpa_moonshine_transcriber.dart      # ★ engine implementation — takes ModelPaths, works for any Moonshine variant
 ├── audio/
 │   └── mic_capture.dart                       # ★ record pkg, 16 kHz mono PCM16 → Float32
 └── util/
@@ -53,18 +55,22 @@ lib/
 
 **Known simplification:** decoding runs on the main isolate (as the official sherpa-onnx Flutter examples do). Utterances are short so stalls are small; the production integration moves the engine into a long-lived background isolate (integration doc item).
 
-## 5. Model delivery
+## 5. Model delivery — in-app download-and-cache
 
-Models are **never committed to git**. CI downloads them from the official sherpa-onnx release assets (`asr-models` tag) at build time and bundles them into the APK as assets — the repo stays a few hundred KB, the APK is self-contained and fully offline. Filenames are normalized (`encode.int8.onnx → encode.onnx`, etc.) so tiny/base need zero code changes. First launch extracts assets to app-support storage once (size-checked, reused afterwards).
+Models are **not bundled in the APK** (the APK stays ~35 MB). The app ships a **model catalog** (`lib/models/model_catalog.dart`: Moonshine base + tiny, both English INT8) with an in-app download button per model — the download-once-and-cache strategy from the transcription spec §12/§20. Details:
 
-Approx. APK impact: base ≈ +125 MB, tiny ≈ +75 MB. The main app will likely switch to download-and-cache (§12 of the transcription spec) — that swap happens entirely inside `model_assets.dart`.
+- Files come from the official sherpa-onnx mirrors (HuggingFace `csukuangfj/sherpa-onnx-moonshine-*-en-int8` per-file, Silero VAD from the k2-fsa GitHub release). Filenames are normalized on disk (`encode.int8.onnx → encode.onnx`) so **every Moonshine variant runs through identical engine code — only paths differ**.
+- Download has live progress, cancel, and file-level resume (finished files are kept; retry skips them). Silero VAD (~2 MB) is a shared component fetched once with the first model.
+- Users can install several models, switch between them (engine re-`prepare`s with the new paths), and delete them.
+- **Nothing is trained or modified on device.** Weights are read-only inference artifacts; the INT8 quantization was applied upstream before publication. Model updates = publishing a new catalog entry, never touching weights locally.
+- Trade-off: the app now requires the INTERNET permission (for the download only). Transcription remains fully offline; audio and transcripts never leave the device.
 
 ## 6. Build & distribution (cloud-only)
 
 - `flutter build` happens **only** in GitHub Actions (`.github/workflows/build-apk.yml`): JDK 17 + Flutter **3.41.2** (pinned to the main app's `.fvmrc`) on ubuntu-latest, with `flutter analyze` + `flutter test` as gates before the build.
 - Release APK is **debug-signed on purpose**: installable on any phone, zero keystore/secrets. This app never goes to a store.
 - `--split-per-abi`; the arm64-v8a APK is what modern phones need.
-- Trigger: push to `main`, or Actions → "Build Demo APK" → Run workflow (choose base/tiny).
+- Trigger: push to `main`, or Actions → "Build Demo APK" → Run workflow. (Models are no longer part of the build — they're downloaded in-app.)
 - The Android shell (`android/`) is copied from the main Picaku repo — same AGP 8.11.1 / Kotlin 2.2.20 / Gradle 8.14 / JDK 17 — with its two known defects fixed (guarded/debug signing; sane Gradle JVM args). Toolchain parity is deliberate: whatever builds here builds in the main app.
 
 ## 7. Acceptance criteria (from ON_DEVICE_TRANSCRIPTION.md §18)

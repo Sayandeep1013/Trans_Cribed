@@ -16,6 +16,8 @@ dependencies:
   # Mic capture - same package and major version as the main Picaku app.
   record: ^6.2.0
   path_provider: ^2.1.0
+  # In-app model download (download-once-and-cache). Same version as main app.
+  http: ^1.6.0
   # Keeps the screen on while recording. The demo has no foreground service on
   # purpose (that shell lives in the main app); screen-off would suspend the mic.
   wakelock_plus: ^1.2.0
@@ -28,9 +30,5 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
-  # These directories are EMPTY in git. CI downloads the models from the
-  # official sherpa-onnx release assets before `flutter build` (see
-  # .github/workflows/build-apk.yml). For a local build run scripts/get_models.ps1.
-  assets:
-    - assets/models/moonshine/
-    - assets/models/vad/
+  # No bundled assets: models are downloaded in-app (lib/models/) from the
+  # official sherpa-onnx mirrors and cached in app storage. Keeps the APK small.

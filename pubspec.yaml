@@ -1,0 +1,36 @@
+name: picaku_stt_demo
+description: "Standalone spike: on-device English transcription with sherpa-onnx + Moonshine INT8 + Silero VAD. Validates the engine before integration into the main Picaku app."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.11.0
+  flutter: ">=3.41.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Engine: ONNX Runtime based ASR/VAD (Moonshine + Silero ship as models, not code).
+  sherpa_onnx: ^1.12.0
+  # Mic capture - same package and major version as the main Picaku app.
+  record: ^6.2.0
+  path_provider: ^2.1.0
+  # Keeps the screen on while recording. The demo has no foreground service on
+  # purpose (that shell lives in the main app); screen-off would suspend the mic.
+  wakelock_plus: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  # These directories are EMPTY in git. CI downloads the models from the
+  # official sherpa-onnx release assets before `flutter build` (see
+  # .github/workflows/build-apk.yml). For a local build run scripts/get_models.ps1.
+  assets:
+    - assets/models/moonshine/
+    - assets/models/vad/

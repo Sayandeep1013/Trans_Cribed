@@ -1,0 +1,14 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+  errors:
+    deprecated_member_use: warning
+
+linter:
+  rules:
+    - unawaited_futures
+    - cancel_subscriptions
+    - prefer_const_constructors
+    - require_trailing_commas

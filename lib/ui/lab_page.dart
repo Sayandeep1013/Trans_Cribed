@@ -80,8 +80,10 @@ class _LabPageState extends State<LabPage> {
           max: 30000,
           divisions: 26,
           format: (v) => '${(v / 1000).round()} s',
-          help: 'Hard cut for pause-free speech. Longer gives the model more '
-              'context (better accuracy) but a slower final decode.',
+          help: 'A nudge, not a cut: past this length the VAD only gets more '
+              'eager to hear a pause. A truly fluent speaker can run past it, '
+              'which is why interim captions above are the real guarantee. '
+              'Longer gives the model more context but a slower final decode.',
           onCommit: (v) => _update(options.copyWith(maxSpeechMs: v.round())),
         ),
         LabeledSlider(

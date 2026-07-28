@@ -69,17 +69,27 @@ class EngineOptions {
   /// Utterances shorter than this are discarded as noise.
   final int minSpeechMs;
 
-  /// Hard cap on a single utterance. The VAD force-closes speech here even
-  /// with no pause, so a monologue still produces final segments.
+  /// Soft cap on a single utterance - **not** a hard cut.
+  ///
+  /// Worth knowing exactly what sherpa-onnx does here, because the name
+  /// oversells it: once the buffered utterance passes this length, the VAD
+  /// does not close the segment. It only becomes *more eager* to hear a pause,
+  /// by dropping its internal min-silence to 0.1 s and raising the speech
+  /// threshold to 0.90. A genuinely fluent speaker who never drops below that
+  /// threshold keeps the segment open indefinitely - which is why captions can
+  /// stop arriving during a monologue no matter what this is set to.
+  ///
+  /// [interimCaptionMs] is the actual guarantee.
   final int maxSpeechMs;
 
-  /// Guaranteed caption rhythm. While an utterance is still open, the engine
-  /// re-decodes what it has every [interimCaptionMs] and emits a provisional
-  /// caption (`TranscriptSegment.isInterim`), replaced by the real one when the
-  /// utterance closes.
+  /// Guaranteed caption rhythm, and the real fix for pause-free speech.
   ///
-  /// This is what makes captions arrive on a clock instead of only at pauses -
-  /// fluent, pause-free speech otherwise shows nothing until [maxSpeechMs].
+  /// While an utterance is still open, the engine re-decodes what it has every
+  /// [interimCaptionMs] and emits a provisional caption
+  /// (`TranscriptSegment.isInterim`), replaced by the real one when the
+  /// utterance finally closes. Unlike [maxSpeechMs] this is enforced by us, on
+  /// a sample clock, so it holds regardless of what the VAD decides.
+  ///
   /// Costs one extra decode per interval. 0 disables it.
   final int interimCaptionMs;
 

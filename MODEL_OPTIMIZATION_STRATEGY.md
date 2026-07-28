@@ -113,6 +113,34 @@ reports Whisper tiny producing higher CER in sherpa-onnx than in faster-whisper.
 If Whisper scores unexpectedly badly here, that is a candidate explanation and
 not necessarily a fact about Whisper itself.
 
+### 5.1b `maxSpeechDuration` does not do what its name says
+
+Worth recording, because it caused a real bug and would have caused another.
+
+Reading the sherpa-onnx source (`voice-activity-detector.cc`): when a buffered
+utterance exceeds `max_speech_duration`, the VAD **does not close the segment**.
+It only becomes more eager to hear a pause — internal min-silence drops to
+0.1 s and the speech threshold rises to 0.90:
+
+```cpp
+if (buffer_.Size() > max_utterance_length_) {
+  model_->SetMinSilenceDuration(new_min_silence_duration_s_);  // 0.1
+  model_->SetThreshold(new_threshold_);                        // 0.90
+}
+```
+
+A speaker fluent enough to stay above 0.90 keeps the segment open
+indefinitely. That is exactly the reported symptom — captions stopping during
+a monologue — and no value of `maxSpeechDuration` fixes it.
+
+The fix is **interim captions**: a decode on our own sample clock every N
+seconds while an utterance is open, emitted as provisional text and replaced by
+the final segment. Enforced by us, so it holds whatever the VAD decides.
+
+Related: `bufferSizeInSeconds` is 60. An utterance that somehow ran past a
+minute would start losing audio off the front. Interim captions make that
+unreachable in practice, but the ceiling is real and worth a bound test.
+
 ### 5.2 Size is not the useful axis
 
 | Model | Download | Family | Variable length? | Hotwords? |

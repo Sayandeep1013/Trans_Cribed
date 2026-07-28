@@ -4,9 +4,7 @@
 > **entirely on your phone** — no internet, no server, no account. It exists to
 > answer whether this engine is good enough to put inside the real Picaku app.
 >
-> **What you are NOT testing:** visual design, polish, or the flow between
-> screens. The UI is throwaway scaffolding. Ugly is fine; wrong is not.
->
+
 > **How long:** 20 minutes for the basics (Parts 1–3). 60+ minutes if you also
 > do accuracy and endurance (Parts 4–6).
 
@@ -85,7 +83,7 @@ Tick each one. If any fails, stop and report it — later tests depend on these.
 
 These are bugs that were reported and fixed. Confirm they are actually gone.
 
-### 2.1 Talking without pausing ⭐ most important
+### 2.1 Talking without pausing  most important
 
 Previously, speaking fluently produced **nothing on screen** until you stopped.
 
@@ -135,7 +133,7 @@ replay that same audio through every model.**
 **WER = word error rate**, the standard ASR metric. 10% ≈ one word in ten
 wrong. Lower is better.
 
-### 3.2 Compare models on identical audio ⭐
+### 3.2 Compare models on identical audio 
 
 1. **Lab** tab → find your recording.
 2. **Re-decode with other models** → select all installed → **Run**.
@@ -208,7 +206,7 @@ Only if you have Parakeet installed.
 | 4.1 | Sit on Diagnostics with a model loaded, idle | RAM (RSS), CPU %, threads |
 | 4.2 | Record for 2 minutes, watch it live | Peak RAM, CPU during decode |
 | 4.3 | Compare across models | RAM per model — especially Parakeet |
-| 4.4 | **Record continuously for 30–45 minutes** ⭐ | See below |
+| 4.4 | **Record continuously for 30–45 minutes**  | See below |
 
 ### The long session (4.4) — the most valuable endurance test
 
@@ -250,7 +248,7 @@ marked ✔ *expected*.
 | Say lots of **numbers and acronyms** | Note how badly — this is known-hard |
 | **Cough / laugh / clear throat** | No crash, no absurd output |
 
-### Interruptions while recording ⭐ high value
+### Interruptions while recording  high value
 
 | Try | Expect |
 |---|---|
@@ -370,13 +368,3 @@ Attached: diagnostics JSON / screenshot / screen recording
 ```
 
 ---
-
-## 9. Priorities, if you're short on time
-
-1. **§2.1** — talking without pausing (the headline fix)
-2. **§3.2** — re-decode comparison table
-3. **§4.4** — the 30-minute endurance run
-4. **§5 Interruptions** — phone call and screen lock during recording
-5. **§3.4** — accent spread, if you can find several speakers
-
-Everything else is a bonus.

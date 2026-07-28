@@ -7,6 +7,7 @@ import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
+import android.os.StatFs
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -34,10 +35,26 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "read" -> result.success(readMetrics())
+                    "freeBytes" -> result.success(freeBytes())
                     else -> result.notImplemented()
                 }
             }
     }
+
+    /**
+     * Usable free space on the volume holding app storage, in bytes.
+     *
+     * Deliberately `availableBytes` and not `freeBytes`: the latter counts
+     * blocks reserved for the system that an ordinary app can never actually
+     * write to, so it over-reports and a "you have room" check built on it
+     * would still fail mid-download.
+     *
+     * Returns null on failure rather than 0 — a zero would read as "disk full"
+     * and block a download that would have worked fine.
+     */
+    private fun freeBytes(): Long? = runCatching {
+        StatFs(filesDir.absolutePath).availableBytes
+    }.getOrNull()
 
     private fun readMetrics(): Map<String, Any?> {
         val out = HashMap<String, Any?>()

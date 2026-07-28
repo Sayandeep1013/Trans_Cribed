@@ -39,8 +39,60 @@ enum EngineType {
   /// 2-second utterance costs the same as a 30-second one. That is precisely
   /// the inefficiency Moonshine was designed to remove, and it makes Whisper
   /// the slowest option in a VAD-gated pipeline like this one.
+  ///
+  /// Whisper is also the **only** family here that can do a language other
+  /// than English - and only in its multilingual builds. See [ModelSpec.isMultilingual].
   whisper,
 }
+
+/// The 99 language codes Whisper's multilingual builds accept, mapped to
+/// display names.
+///
+/// This list is not cosmetic. sherpa-onnx looks the configured code up in the
+/// model's own `lang2id` table and, on a miss, calls `SHERPA_ONNX_EXIT(-1)` -
+/// which expands to `_Exit(-1)`, killing the process outright with no Dart
+/// exception and no crash handler. A typo in a language code is therefore an
+/// instant, unexplained app death. Everything that sets a language must
+/// validate against [isWhisperLanguage] first.
+///
+/// Source: `GetAllWhisperLanguageCodes()` in sherpa-onnx
+/// `csrc/offline-whisper-model-config.cc`.
+const Map<String, String> whisperLanguages = {
+  'en': 'English', 'zh': 'Chinese', 'de': 'German', 'es': 'Spanish',
+  'ru': 'Russian', 'ko': 'Korean', 'fr': 'French', 'ja': 'Japanese',
+  'pt': 'Portuguese', 'tr': 'Turkish', 'pl': 'Polish', 'ca': 'Catalan',
+  'nl': 'Dutch', 'ar': 'Arabic', 'sv': 'Swedish', 'it': 'Italian',
+  'id': 'Indonesian', 'hi': 'Hindi', 'fi': 'Finnish', 'vi': 'Vietnamese',
+  'he': 'Hebrew', 'uk': 'Ukrainian', 'el': 'Greek', 'ms': 'Malay',
+  'cs': 'Czech', 'ro': 'Romanian', 'da': 'Danish', 'hu': 'Hungarian',
+  'ta': 'Tamil', 'no': 'Norwegian', 'th': 'Thai', 'ur': 'Urdu',
+  'hr': 'Croatian', 'bg': 'Bulgarian', 'lt': 'Lithuanian', 'la': 'Latin',
+  'mi': 'Maori', 'ml': 'Malayalam', 'cy': 'Welsh', 'sk': 'Slovak',
+  'te': 'Telugu', 'fa': 'Persian', 'lv': 'Latvian', 'bn': 'Bengali',
+  'sr': 'Serbian', 'az': 'Azerbaijani', 'sl': 'Slovenian', 'kn': 'Kannada',
+  'et': 'Estonian', 'mk': 'Macedonian', 'br': 'Breton', 'eu': 'Basque',
+  'is': 'Icelandic', 'hy': 'Armenian', 'ne': 'Nepali', 'mn': 'Mongolian',
+  'bs': 'Bosnian', 'kk': 'Kazakh', 'sq': 'Albanian', 'sw': 'Swahili',
+  'gl': 'Galician', 'mr': 'Marathi', 'pa': 'Punjabi', 'si': 'Sinhala',
+  'km': 'Khmer', 'sn': 'Shona', 'yo': 'Yoruba', 'so': 'Somali',
+  'af': 'Afrikaans', 'oc': 'Occitan', 'ka': 'Georgian', 'be': 'Belarusian',
+  'tg': 'Tajik', 'sd': 'Sindhi', 'gu': 'Gujarati', 'am': 'Amharic',
+  'yi': 'Yiddish', 'lo': 'Lao', 'uz': 'Uzbek', 'fo': 'Faroese',
+  'ht': 'Haitian Creole', 'ps': 'Pashto', 'tk': 'Turkmen', 'nn': 'Nynorsk',
+  'mt': 'Maltese', 'sa': 'Sanskrit', 'lb': 'Luxembourgish', 'my': 'Burmese',
+  'bo': 'Tibetan', 'tl': 'Tagalog', 'mg': 'Malagasy', 'as': 'Assamese',
+  'tt': 'Tatar', 'haw': 'Hawaiian', 'ln': 'Lingala', 'ha': 'Hausa',
+  'ba': 'Bashkir', 'jw': 'Javanese', 'su': 'Sundanese',
+};
+
+/// True when [code] is safe to hand to sherpa-onnx as a Whisper language.
+/// The empty string is also safe - it means "auto-detect".
+bool isWhisperLanguage(String code) =>
+    code.isEmpty || whisperLanguages.containsKey(code);
+
+/// Sentinel for the language dropdown: let Whisper detect the language itself
+/// from the first ~30 s window of each utterance.
+const String whisperAutoDetect = '';
 
 class RemoteFile {
   const RemoteFile({required this.localName, required this.url});
@@ -60,6 +112,7 @@ class ModelSpec {
     required this.files,
     required this.sourceUrl,
     this.numThreads = 2,
+    this.isMultilingual = false,
   });
 
   final String id;
@@ -77,8 +130,27 @@ class ModelSpec {
   /// Decode threads recommended for this model's size.
   final int numThreads;
 
+  /// Whether the weights can transcribe languages other than English.
+  ///
+  /// This is a property of the **weights**, not of any setting. Whisper's
+  /// `.en` builds were trained on English only and their initial-token
+  /// sequence is just `[sot]` - sherpa-onnx skips the language/task block
+  /// entirely for them (`if (model_->IsMultiLingual())` in
+  /// `offline-whisper-greedy-search-decoder.cc`). Pointing one at German audio
+  /// does not fail, it produces English-looking nonsense. The only fix is
+  /// different weights, which is why the multilingual builds are separate
+  /// catalog entries rather than a toggle on the existing ones.
+  ///
+  /// Moonshine and Parakeet are English-only across the board: Useful Sensors
+  /// and NVIDIA have not published multilingual ONNX exports of these sizes.
+  final bool isMultilingual;
+
   /// Hotwords and beam search are transducer-only in sherpa-onnx.
   bool get supportsHotwords => type == EngineType.nemoTransducer;
+
+  /// Whether the language / task settings do anything for this model.
+  bool get supportsLanguageChoice =>
+      type == EngineType.whisper && isMultilingual;
 }
 
 const String _hf = 'https://huggingface.co/csukuangfj';
@@ -178,11 +250,12 @@ final ModelSpec parakeetTdt06b = ModelSpec(
 
 final ModelSpec whisperTinyEn = ModelSpec(
   id: 'whisper-tiny.en-int8',
-  displayName: 'Whisper Tiny.en',
+  displayName: 'Whisper Tiny.en (English only)',
   description:
       'The family the main app already uses (via whisper.cpp). Bigger and '
       'slower than Moonshine Tiny at similar accuracy - here as the baseline '
-      'to beat, not as a recommendation.',
+      'to beat, not as a recommendation. English only: it cannot be made to '
+      'transcribe another language.',
   approxMb: 104,
   type: EngineType.whisper,
   files: _whisperFiles('tiny.en'),
@@ -191,20 +264,53 @@ final ModelSpec whisperTinyEn = ModelSpec(
 
 final ModelSpec whisperBaseEn = ModelSpec(
   id: 'whisper-base.en-int8',
-  displayName: 'Whisper Base.en',
+  displayName: 'Whisper Base.en (English only)',
   description:
       'Size-matched to Moonshine Base for a fair comparison. Expect notably '
-      'worse RTF: the 30-second encoder pads every short utterance.',
+      'worse RTF: the 30-second encoder pads every short utterance. English '
+      'only.',
   approxMb: 161,
   type: EngineType.whisper,
   files: _whisperFiles('base.en'),
   sourceUrl: _whisperRepo('base.en'),
 );
 
+final ModelSpec whisperTinyMulti = ModelSpec(
+  id: 'whisper-tiny-int8',
+  displayName: 'Whisper Tiny (99 languages)',
+  description:
+      'Same size as Tiny.en but trained on 99 languages, so it can transcribe '
+      'non-English speech and translate any of them into English. Accuracy on '
+      'English is slightly worse than Tiny.en - multilingual capacity is '
+      'spent on other languages.',
+  approxMb: 104,
+  type: EngineType.whisper,
+  isMultilingual: true,
+  files: _whisperFiles('tiny'),
+  sourceUrl: _whisperRepo('tiny'),
+);
+
+final ModelSpec whisperBaseMulti = ModelSpec(
+  id: 'whisper-base-int8',
+  displayName: 'Whisper Base (99 languages)',
+  description:
+      'The recommended pick when meetings are not in English. Handles 99 '
+      'languages, can auto-detect which one is being spoken, and can '
+      'translate straight to English. Slowest option here - the 30-second '
+      'encoder still pads every utterance.',
+  approxMb: 161,
+  type: EngineType.whisper,
+  isMultilingual: true,
+  files: _whisperFiles('base'),
+  sourceUrl: _whisperRepo('base'),
+);
+
 final List<ModelSpec> modelCatalog = [
   moonshineBase,
   moonshineTiny,
   parakeetTdt06b,
+  whisperBaseMulti,
+  whisperTinyMulti,
   whisperBaseEn,
   whisperTinyEn,
 ];

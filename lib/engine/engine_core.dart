@@ -120,8 +120,11 @@ class EngineCore {
           whisper: sherpa.OfflineWhisperModelConfig(
             encoder: files['encoder.onnx']!,
             decoder: files['decoder.onnx']!,
-            language: 'en',
-            task: 'transcribe',
+            // Sanitized, never passed through raw: an unrecognized code makes
+            // sherpa-onnx call _Exit(-1) mid-decode, which kills the app with
+            // no Dart exception to catch. See sanitizeWhisperLanguage.
+            language: sanitizeWhisperLanguage(options.whisperLanguage),
+            task: sanitizeWhisperTask(options.whisperTask),
           ),
           tokens: files['tokens.txt']!,
           numThreads: numThreads,

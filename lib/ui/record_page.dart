@@ -172,6 +172,34 @@ class _RecordPageState extends State<RecordPage> {
                           ],
                         ),
                         const SizedBox(height: 4),
+                        // Language capability is the single most misread thing
+                        // about these models, so it gets a badge rather than a
+                        // sentence buried in the description.
+                        Row(
+                          children: [
+                            Icon(
+                              spec.isMultilingual
+                                  ? Icons.language
+                                  : Icons.abc,
+                              size: 16,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              spec.isMultilingual
+                                  ? '99 languages · can translate to English'
+                                  : 'English only',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(
+                                    color:
+                                        Theme.of(context).colorScheme.primary,
+                                  ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
                         Text(
                           spec.description,
                           style: Theme.of(context).textTheme.bodySmall,
@@ -287,6 +315,10 @@ class _RecordPageState extends State<RecordPage> {
               'Warmup inference': '${stats.warmup.inMilliseconds} ms',
             },
             'Settings': s.options.shortLabel,
+            'Language': s.activeSpec?.supportsLanguageChoice == true
+                ? '${s.options.languageLabel}'
+                    '${s.options.whisperTask == 'translate' ? ' → English' : ''}'
+                : 'English only (fixed by this model)',
             'Keep audio': s.retainAudio ? 'Yes (enables re-decode)' : 'No',
           },
           trailing: TextButton(

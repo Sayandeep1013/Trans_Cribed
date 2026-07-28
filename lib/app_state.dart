@@ -16,6 +16,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'bench/bench_runner.dart';
 import 'bench/passages.dart';
 import 'bench/wer.dart';
+import 'diag/device_metrics.dart';
 import 'diag/resource_monitor.dart';
 import 'diag/session_log.dart';
 import 'engine/engine_options.dart';
@@ -172,6 +173,7 @@ class AppState extends ChangeNotifier {
     _supportDir = await getApplicationSupportDirectory();
     await _loadOptions();
     await _loadSessionIndex();
+    await refreshStorageUsage();
 
     _resourceSub = resources.samples.listen((sample) {
       latestResource = sample;
@@ -294,7 +296,47 @@ class AppState extends ChangeNotifier {
   List<ModelSpec> get installedSpecs =>
       modelCatalog.where((s) => installed[s.id] == true).toList();
 
+  /// Bytes we want free before starting a download: the model itself, the
+  /// shared VAD, and a margin.
+  ///
+  /// The margin is not superstition. Files land as `<name>.part` and are only
+  /// renamed on completion, and `approxMb` is a rounded catalog figure rather
+  /// than a measured content-length, so the true peak is always a little above
+  /// the advertised size. Running the volume to actually zero also tends to
+  /// take other apps down with it.
+  static int requiredBytesFor(ModelSpec spec) =>
+      ((spec.approxMb + 3) * 1.15 * 1024 * 1024).round();
+
+  /// Checks free space before committing the user to a long download.
+  ///
+  /// Returns an error message, or null when it is safe to proceed. Without
+  /// this the failure mode is a download that runs for several minutes on
+  /// mobile data and then dies with a raw filesystem error.
+  Future<String?> _diskSpaceProblem(ModelSpec spec) async {
+    final free = await DeviceMetrics.freeBytes();
+    if (free == null) return null; // platform declined to say; let it try
+
+    final needed = requiredBytesFor(spec);
+    if (free >= needed) return null;
+
+    String mb(int bytes) => '${(bytes / 1048576).round()} MB';
+    return 'Not enough storage for ${spec.displayName}.\n\n'
+        'Needs about ${mb(needed)} free, but only ${mb(free)} is available. '
+        'Free up ${mb(needed - free)} and try again, or delete a model you '
+        'are not using.';
+  }
+
   Future<void> downloadModel(ModelSpec spec) async {
+    final spaceProblem = await _diskSpaceProblem(spec);
+    if (spaceProblem != null) {
+      log.add('model.download.blocked', {
+        'model': spec.id,
+        'reason': 'insufficient_storage',
+      });
+      _fail(spaceProblem);
+      return;
+    }
+
     phase = Phase.downloading;
     downloadingSpec = spec;
     downloadProgress = null;
@@ -414,10 +456,17 @@ class AppState extends ChangeNotifier {
   Future<void> deleteModel(ModelSpec spec) async {
     if (activeSpec?.id == spec.id) {
       await _segmentSub?.cancel();
+      await _levelSub?.cancel();
+      await _speechSub?.cancel();
       await _transcriber?.dispose();
       _transcriber = null;
       activeSpec = null;
       stats = null;
+      // Without this the UI stayed on `ready` with no engine behind it, so the
+      // mic button did nothing at all: startRecording() returns early on a
+      // null spec, silently. Falling back to the catalog makes the only
+      // available action the correct one - pick another model.
+      phase = Phase.catalog;
     }
     await store.delete(spec);
     log.add('model.deleted', {'model': spec.id});
@@ -452,6 +501,10 @@ class AppState extends ChangeNotifier {
         a.blankPenalty != b.blankPenalty ||
         a.hotwords != b.hotwords ||
         a.hotwordsScore != b.hotwordsScore ||
+        // Baked into OfflineWhisperModelConfig at construction, so changing
+        // either means rebuilding the recognizer.
+        a.whisperLanguage != b.whisperLanguage ||
+        a.whisperTask != b.whisperTask ||
         a.preRollMs != b.preRollMs ||
         a.postRollMs != b.postRollMs ||
         a.highPass != b.highPass ||
@@ -562,6 +615,7 @@ class AppState extends ChangeNotifier {
       sessions.insert(0, session);
       lastSession = session;
       await _saveSessionIndex();
+      await refreshStorageUsage();
 
       log.add('session.stop', {
         'model': spec.id,
@@ -653,6 +707,54 @@ class AppState extends ChangeNotifier {
     sessions.remove(session);
     if (lastSession == session) lastSession = null;
     await _saveSessionIndex();
+    await refreshStorageUsage();
+    notifyListeners();
+  }
+
+  /// Total bytes of retained session audio. Refreshed explicitly rather than
+  /// recomputed on every rebuild - it is a `stat` per recording.
+  int retainedAudioBytes = 0;
+
+  String get retainedAudioLabel {
+    if (retainedAudioBytes < 1048576) return '${retainedAudioBytes ~/ 1024} KB';
+    return '${(retainedAudioBytes / 1048576).toStringAsFixed(1)} MB';
+  }
+
+  Future<void> refreshStorageUsage() async {
+    var total = 0;
+    for (final session in sessions) {
+      final path = session.wavPath;
+      if (path == null) continue;
+      try {
+        final f = File(path);
+        if (await f.exists()) total += await f.length();
+      } catch (_) {
+        // A file we cannot stat simply does not count toward the total.
+      }
+    }
+    retainedAudioBytes = total;
+    notifyListeners();
+  }
+
+  /// Deletes every recording and its audio.
+  ///
+  /// Audio retention costs ~2 MB per minute and a long test day fills a phone
+  /// quietly; deleting recordings one card at a time is the kind of chore that
+  /// makes testers stop retaining audio altogether.
+  Future<void> clearAllSessions() async {
+    for (final session in List<RecordedSession>.from(sessions)) {
+      final path = session.wavPath;
+      if (path == null) continue;
+      try {
+        final f = File(path);
+        if (await f.exists()) await f.delete();
+      } catch (_) {}
+    }
+    sessions.clear();
+    lastSession = null;
+    await _saveSessionIndex();
+    await refreshStorageUsage();
+    log.add('sessions.cleared', const {});
     notifyListeners();
   }
 

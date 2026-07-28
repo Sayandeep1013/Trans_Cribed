@@ -61,4 +61,19 @@ class DeviceMetrics {
       return DeviceMetricsSnapshot.empty;
     }
   }
+
+  /// Usable free bytes on the volume holding app storage, or null when the
+  /// platform will not say.
+  ///
+  /// Null means "unknown", never "none": callers must treat it as permission
+  /// to proceed, or a phone that declines to answer could never download a
+  /// model at all.
+  static Future<int?> freeBytes() async {
+    try {
+      final value = await _channel.invokeMethod<Object?>('freeBytes');
+      return (value as num?)?.toInt();
+    } catch (_) {
+      return null;
+    }
+  }
 }

@@ -15,6 +15,27 @@
 ///    exactly. This is what makes the benchmark meaningful.
 library;
 
+import '../models/model_catalog.dart';
+
+/// Coerces anything at all into a language code sherpa-onnx will accept.
+///
+/// Unknown values become `''` (auto-detect) rather than an error, because the
+/// alternative inside the native layer is `_Exit(-1)`: no exception, no stack,
+/// the app simply vanishes. Silently degrading to auto-detect is strictly
+/// better than that, and the caller can compare the result to the input if it
+/// wants to warn.
+String sanitizeWhisperLanguage(Object? value) {
+  final code = (value as String?)?.trim().toLowerCase() ?? '';
+  return isWhisperLanguage(code) ? code : '';
+}
+
+/// `translate` and `transcribe` are the only tasks Whisper defines; anything
+/// else is logged and ignored by sherpa-onnx, so normalize it here.
+String sanitizeWhisperTask(Object? value) {
+  final task = (value as String?)?.trim().toLowerCase() ?? '';
+  return task == 'translate' ? 'translate' : 'transcribe';
+}
+
 class EngineOptions {
   const EngineOptions({
     this.preRollMs = 200,
@@ -34,6 +55,8 @@ class EngineOptions {
     this.blankPenalty = 0.0,
     this.hotwords = '',
     this.hotwordsScore = 1.5,
+    this.whisperLanguage = '',
+    this.whisperTask = 'transcribe',
     this.micAutoGain = true,
     this.micNoiseSuppress = true,
     this.micEchoCancel = true,
@@ -110,6 +133,29 @@ class EngineOptions {
   final String hotwords;
   final double hotwordsScore;
 
+  // --- Whisper only (decode-time) -------------------------------------------
+  /// Spoken language, as a Whisper code (`'de'`, `'hi'`, …). Empty means
+  /// **auto-detect**, which is the default.
+  ///
+  /// Only multilingual Whisper builds read this. `.en` builds skip the whole
+  /// language block, and Moonshine/Parakeet have no equivalent - they are
+  /// English-only models, so there is nothing to select.
+  ///
+  /// Auto-detect is not free: sherpa-onnx runs one extra decoder pass over the
+  /// encoder output to score all 99 language tokens before it starts
+  /// transcribing. Pinning the language when you already know it removes that
+  /// pass, and removes the chance of a short or noisy utterance being detected
+  /// as the wrong language.
+  ///
+  /// Must be a code in `whisperLanguages` or empty. Anything else terminates
+  /// the process inside sherpa-onnx - see that map's doc comment.
+  final String whisperLanguage;
+
+  /// `'transcribe'` (same language out) or `'translate'` (any language in,
+  /// English out). Multilingual Whisper only; there is no other direction -
+  /// Whisper cannot translate English into anything.
+  final String whisperTask;
+
   // --- Capture-time (requires re-recording to compare) ----------------------
   final bool micAutoGain;
   final bool micNoiseSuppress;
@@ -137,6 +183,8 @@ class EngineOptions {
     double? blankPenalty,
     String? hotwords,
     double? hotwordsScore,
+    String? whisperLanguage,
+    String? whisperTask,
     bool? micAutoGain,
     bool? micNoiseSuppress,
     bool? micEchoCancel,
@@ -161,6 +209,8 @@ class EngineOptions {
       blankPenalty: blankPenalty ?? this.blankPenalty,
       hotwords: hotwords ?? this.hotwords,
       hotwordsScore: hotwordsScore ?? this.hotwordsScore,
+      whisperLanguage: whisperLanguage ?? this.whisperLanguage,
+      whisperTask: whisperTask ?? this.whisperTask,
       micAutoGain: micAutoGain ?? this.micAutoGain,
       micNoiseSuppress: micNoiseSuppress ?? this.micNoiseSuppress,
       micEchoCancel: micEchoCancel ?? this.micEchoCancel,
@@ -195,6 +245,11 @@ class EngineOptions {
       blankPenalty: asDouble('blankPenalty', defaults.blankPenalty),
       hotwords: json['hotwordsText'] as String? ?? defaults.hotwords,
       hotwordsScore: asDouble('hotwordsScore', defaults.hotwordsScore),
+      // Sanitized on the way in: a hand-edited or downgraded options file
+      // holding a bogus code would otherwise reach sherpa-onnx and _Exit() the
+      // process on the next decode. Falling back to auto-detect is always safe.
+      whisperLanguage: sanitizeWhisperLanguage(json['whisperLanguage']),
+      whisperTask: sanitizeWhisperTask(json['whisperTask']),
       micAutoGain: asBool('micAutoGain', defaults.micAutoGain),
       micNoiseSuppress: asBool('micNoiseSuppress', defaults.micNoiseSuppress),
       micEchoCancel: asBool('micEchoCancel', defaults.micEchoCancel),
@@ -224,6 +279,8 @@ class EngineOptions {
             : hotwords.trim().split('\n').length,
         'hotwordsText': hotwords,
         'hotwordsScore': hotwordsScore,
+        'whisperLanguage': whisperLanguage,
+        'whisperTask': whisperTask,
         'micAutoGain': micAutoGain,
         'micNoiseSuppress': micNoiseSuppress,
         'micEchoCancel': micEchoCancel,
@@ -239,7 +296,14 @@ class EngineOptions {
       'thr${vadThreshold.toStringAsFixed(2)}',
       if (decodingMethod != 'greedy_search') 'beam$maxActivePaths',
       if (usesHotwords) 'hotwords',
+      if (whisperLanguage.isNotEmpty) 'lang $whisperLanguage',
+      if (whisperTask == 'translate') 'translate→en',
     ];
     return parts.join(' · ');
   }
+
+  /// How the language setting reads in the UI.
+  String get languageLabel => whisperLanguage.isEmpty
+      ? 'Auto-detect'
+      : whisperLanguages[whisperLanguage] ?? whisperLanguage;
 }

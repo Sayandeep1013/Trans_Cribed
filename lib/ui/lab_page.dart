@@ -49,6 +49,16 @@ class _LabPageState extends State<LabPage> {
           ),
         ),
 
+        // --- language ------------------------------------------------------
+        const SectionHeader(
+          title: 'Spoken language',
+          explanation:
+              'A property of the weights, not a setting you can force. Only '
+              'the multilingual Whisper builds understand anything but '
+              'English.',
+        ),
+        ..._buildLanguage(options),
+
         // --- captions ------------------------------------------------------
         const SectionHeader(
           title: 'Caption rhythm',
@@ -206,9 +216,25 @@ class _LabPageState extends State<LabPage> {
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           title: const Text('Keep session audio'),
+          subtitle: Text(
+            s.sessions.isEmpty
+                ? 'Nothing stored yet.'
+                : '${s.sessions.length} recording'
+                    '${s.sessions.length == 1 ? '' : 's'} using '
+                    '${s.retainedAudioLabel}.',
+          ),
           value: s.retainAudio,
           onChanged: s.setRetainAudio,
         ),
+        if (s.sessions.isNotEmpty)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => unawaited(_confirmClearAll()),
+              icon: const Icon(Icons.delete_sweep_outlined),
+              label: Text('Delete all recordings (${s.retainedAudioLabel})'),
+            ),
+          ),
 
         // --- recordings ----------------------------------------------------
         const SectionHeader(
@@ -248,6 +274,125 @@ class _LabPageState extends State<LabPage> {
         const SizedBox(height: 32),
       ],
     );
+  }
+
+  /// Deleting every recording also destroys the reference texts and any
+  /// comparison already run against them, so it asks first.
+  Future<void> _confirmClearAll() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete all recordings?'),
+        content: Text(
+          'Removes ${s.sessions.length} recording'
+          '${s.sessions.length == 1 ? '' : 's'} and frees '
+          '${s.retainedAudioLabel}.\n\n'
+          'Reference texts and comparison results go with them. Anything you '
+          'have not exported from Diagnostics is lost.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete all'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await s.clearAllSessions();
+  }
+
+  /// The language controls only exist for multilingual Whisper. For anything
+  /// else they are hidden rather than disabled, and replaced with the reason -
+  /// a greyed-out dropdown would imply the limit is a permission problem
+  /// rather than what the model was trained on.
+  List<Widget> _buildLanguage(EngineOptions options) {
+    final spec = s.activeSpec;
+    final theme = Theme.of(context);
+
+    if (spec == null) {
+      return [
+        Text('Load a model first.', style: theme.textTheme.bodySmall),
+      ];
+    }
+
+    if (!spec.supportsLanguageChoice) {
+      final multilingualAvailable = modelCatalog
+          .where((m) => m.supportsLanguageChoice)
+          .map((m) => m.displayName)
+          .join(', ');
+      return [
+        Card(
+          color: theme.colorScheme.surfaceContainerHighest,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text(
+              '${spec.displayName} is English-only.\n\n'
+              'This is not a setting. Moonshine and Parakeet were trained on '
+              'English alone, and Whisper\'s ".en" builds have no language '
+              'token at all — sherpa-onnx skips the language step entirely for '
+              'them. Fed German or Hindi they will not error; they will emit '
+              'confident English-shaped nonsense, which is exactly what makes '
+              'this failure hard to spot.\n\n'
+              'For other languages, download: $multilingualAvailable.',
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+        ),
+      ];
+    }
+
+    return [
+      // Plain DropdownButton, not DropdownButtonFormField: the FormField
+      // variant tracks its own value from `initialValue` and would ignore an
+      // option set restored from disk or changed anywhere else.
+      InputDecorator(
+        decoration: const InputDecoration(
+          labelText: 'Language',
+          border: OutlineInputBorder(),
+          helperText:
+              'Auto-detect costs one extra decoder pass per utterance and can '
+              'guess wrong on short or noisy speech. Pin it when you know it.',
+          helperMaxLines: 3,
+        ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<String>(
+            value: options.whisperLanguage,
+            isExpanded: true,
+            items: [
+              const DropdownMenuItem(
+                value: whisperAutoDetect,
+                child: Text('Auto-detect'),
+              ),
+              for (final entry in whisperLanguages.entries)
+                DropdownMenuItem(
+                  value: entry.key,
+                  child: Text('${entry.value}  (${entry.key})'),
+                ),
+            ],
+            onChanged: (value) =>
+                _update(options.copyWith(whisperLanguage: value ?? '')),
+          ),
+        ),
+      ),
+      const SizedBox(height: 8),
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Translate to English'),
+        subtitle: const Text(
+          'Transcribe the speech straight into English instead of the language '
+          'it was spoken in. One direction only — Whisper cannot translate out '
+          'of English.',
+        ),
+        value: options.whisperTask == 'translate',
+        onChanged: (v) => _update(
+          options.copyWith(whisperTask: v ? 'translate' : 'transcribe'),
+        ),
+      ),
+    ];
   }
 
   List<Widget> _buildAdvanced(EngineOptions options) {

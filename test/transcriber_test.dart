@@ -33,6 +33,21 @@ void main() {
     test('empty input yields empty transcript', () {
       expect(assembleTranscript(const []), '');
     });
+
+    test('drops interim captions so their audio is not counted twice', () {
+      final segments = [
+        seg('One.', 0, 800, 50),
+        TranscriptSegment(
+          text: 'Two is still bei',
+          start: const Duration(milliseconds: 900),
+          end: const Duration(milliseconds: 1600),
+          decodeTime: const Duration(milliseconds: 40),
+          isInterim: true,
+        ),
+        seg('Two is still being said.', 900, 2400, 90),
+      ];
+      expect(assembleTranscript(segments), 'One. Two is still being said.');
+    });
   });
 
   group('TranscriptSegment.rtf', () {

@@ -11,8 +11,10 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # Engine: ONNX Runtime based ASR/VAD (Moonshine + Silero ship as models, not code).
-  sherpa_onnx: ^1.12.0
+  # Engine: ONNX Runtime based ASR/VAD (models ship as downloads, not code).
+  # No pubspec.lock is committed, so CI has always resolved the newest 1.x -
+  # this constraint just makes the version we actually build against explicit.
+  sherpa_onnx: ^1.13.4
   # Mic capture - same package and major version as the main Picaku app.
   record: ^6.2.0
   path_provider: ^2.1.0

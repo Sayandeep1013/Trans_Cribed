@@ -9,13 +9,16 @@ library;
 
 import 'dart:async';
 
-/// One finalized speech segment (a VAD-gated utterance).
+/// One speech segment (a VAD-gated utterance, or a provisional slice of one).
 class TranscriptSegment {
   const TranscriptSegment({
     required this.text,
     required this.start,
     required this.end,
     required this.decodeTime,
+    this.captionLatency = Duration.zero,
+    this.isInterim = false,
+    this.rmsDb = 0,
   });
 
   final String text;
@@ -26,6 +29,20 @@ class TranscriptSegment {
 
   /// Wall-clock time the engine spent decoding this segment.
   final Duration decodeTime;
+
+  /// End of the spoken audio to caption available - what the user actually
+  /// perceives as lag. Includes the VAD's min-silence wait, queueing and
+  /// decode, so it is always larger than [decodeTime].
+  final Duration captionLatency;
+
+  /// A provisional caption for an utterance still in progress. Replaced by the
+  /// final segment covering the same audio when the utterance closes. Callers
+  /// that only want finished text should filter these out.
+  final bool isInterim;
+
+  /// Level of the audio that was decoded, in dBFS. Very low values (below
+  /// about -45) usually explain a bad transcription better than the model does.
+  final double rmsDb;
 
   Duration get audioLength => end - start;
 
@@ -42,6 +59,7 @@ class TranscriptResult {
     required this.text,
     required this.segments,
     required this.audioDuration,
+    this.audioPath,
   });
 
   /// Plain text - what the main app POSTs to /api/notes/sync as `transcript`.
@@ -51,6 +69,11 @@ class TranscriptResult {
   /// Total captured audio length - what the main app sends as
   /// `duration_seconds` (the referral system depends on it).
   final Duration audioDuration;
+
+  /// Where the session's 16 kHz mono WAV was written, when audio retention is
+  /// on. This is what lets the same speech be re-decoded by another model.
+  /// The main app will normally leave retention off.
+  final String? audioPath;
 
   double get durationSeconds => audioDuration.inMilliseconds / 1000.0;
 }
@@ -105,8 +128,12 @@ class MicPermissionDeniedException implements Exception {
 }
 
 /// Joins segment texts into the final plain transcript.
+///
+/// Interim captions are dropped: they are provisional views of audio that a
+/// final segment also covers, so including them would duplicate text.
 String assembleTranscript(Iterable<TranscriptSegment> segments) {
   return segments
+      .where((s) => !s.isInterim)
       .map((s) => s.text.trim())
       .where((t) => t.isNotEmpty)
       .join(' ')

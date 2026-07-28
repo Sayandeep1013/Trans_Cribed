@@ -11,9 +11,9 @@
 | Decision | Value | Spec ref |
 |---|---|---|
 | Engine | **sherpa-onnx** (`sherpa_onnx` Flutter package, ONNX Runtime + XNNPACK CPU), hosted in a dedicated background isolate | §6 |
-| Models | **Catalog** (in-app download): Moonshine base/tiny INT8 (English) + **NVIDIA Parakeet TDT 0.6B v2 INT8** (max accuracy, flagship phones) | §6, §10b, §19 |
+| Models | **Catalog** (in-app download): Moonshine base/tiny INT8, **NVIDIA Parakeet TDT 0.6B v2 INT8** (max accuracy + hotwords), **Whisper tiny.en/base.en INT8** (the incumbent, as the baseline to beat) | §6, §10b, §19 |
 | VAD | **Silero VAD** via sherpa-onnx, utterance-gated | §6, §11 |
-| Streaming granularity | **Per-utterance captions** (text appears at natural pauses, ~1–3 s) | §15 default |
+| Streaming granularity | **Per-utterance captions** (at natural pauses) **plus interim captions on a fixed clock** so fluent, pause-free speech still updates the screen | §15 default |
 | Decode | Greedy, 2 threads | §13 |
 | Scope | English only, Android only, fully offline | locked scope |
 | Load strategy | Prepare once (singleton) + warmup inference; never per session | §9 |
@@ -35,19 +35,40 @@
 
 ```
 lib/
-├── main.dart                                  # demo UI: model catalog + record screen + metrics (throwaway)
+├── main.dart                                  # app shell: Record / Lab / Diagnostics tabs (throwaway)
+├── app_state.dart                             # demo state owner (throwaway)
 ├── models/
-│   ├── model_catalog.dart                     # ★ downloadable-model registry (id, URLs, sizes)
+│   ├── model_catalog.dart                     # ★ downloadable-model registry (id, URLs, sizes, provenance)
 │   └── model_store.dart                       # ★ download-once-and-cache store (progress, cancel, resume, delete)
+├── engine/
+│   ├── engine_options.dart                    # ★ every tunable that affects quality or speed
+│   └── engine_core.dart                       # ★ the sherpa-onnx pipeline, isolate-agnostic
 ├── transcriber/
 │   ├── transcriber.dart                       # ★ THE INTERFACE — copied to the main app unchanged
-│   └── sherpa_onnx_transcriber.dart           # ★ engine in a background isolate; Moonshine + NeMo transducer (Parakeet)
+│   └── sherpa_onnx_transcriber.dart           # ★ live capture in a background isolate + WAV retention
 ├── audio/
-│   └── mic_capture.dart                       # ★ record pkg, 16 kHz mono PCM16 → Float32
+│   └── mic_capture.dart                       # ★ record pkg, 16 kHz mono PCM16
+├── bench/
+│   ├── bench_runner.dart                      # re-decode stored audio with any model (measurement)
+│   ├── wer.dart                               # WER / CER scoring (measurement)
+│   └── passages.dart                          # scored read-aloud passages (measurement)
+├── diag/
+│   ├── resource_monitor.dart                  # RAM / CPU / thermal / battery sampling (measurement)
+│   ├── device_metrics.dart                    # platform channel for thermal + battery (measurement)
+│   └── session_log.dart                       # timestamped event log + JSON export (measurement)
+├── ui/                                        # throwaway demo screens
 └── util/
-    └── pcm.dart                               # ★ PCM conversion (unit-tested)
+    ├── pcm.dart                               # ★ PCM conversion (unit-tested)
+    ├── dsp.dart                               # ★ high-pass, RMS normalize, pre-roll ring (unit-tested)
+    └── wav.dart                               # ★ WAV read/write (unit-tested)
 ```
-★ = handoff modules. The UI (`main.dart`) is throwaway.
+★ = handoff modules. UI, `app_state.dart`, `bench/` and `diag/` are demo-only:
+the measurement apparatus exists to make decisions here, not to ship.
+
+`engine_core.dart` is deliberately shared between the live isolate and the
+benchmark isolate, so a re-decode of stored audio goes through the exact same
+path a live session does. Benchmark numbers are therefore about the engine, not
+about a second implementation of it.
 
 **Pipeline:** mic (16 kHz mono PCM16) → Float32 → 512-sample windows → Silero VAD → finalized utterance segments → Moonshine offline decode → `TranscriptSegment` stream (live captions) + accumulated buffer → on Stop: VAD flush + assembled `TranscriptResult { text, segments, audioDuration }`.
 
@@ -72,6 +93,27 @@ Models are **not bundled in the APK** (the APK stays ~35 MB). The app ships a **
 - `--split-per-abi`; the arm64-v8a APK is what modern phones need.
 - Trigger: push to `main`, or Actions → "Build Demo APK" → Run workflow. (Models are no longer part of the build — they're downloaded in-app.)
 - The Android shell (`android/`) is copied from the main Picaku repo — same AGP 8.11.1 / Kotlin 2.2.20 / Gradle 8.14 / JDK 17 — with its two known defects fixed (guarded/debug signing; sane Gradle JVM args). Toolchain parity is deliberate: whatever builds here builds in the main app.
+
+## 6b. Measurement apparatus (Lab + Diagnostics tabs)
+
+The demo's job is to produce decisions, which means it has to produce numbers.
+
+- **Lab** — every engine tunable as a live control (padding, VAD, thresholds,
+  threads, beam search, hotwords, capture DSP), plus the recordings list.
+- **Re-decode** — session audio is retained (~2 MB/min), so one recording can be
+  replayed through every installed model. Identical input means differences in
+  output are the model, not the delivery. This is also the only rigorous way to
+  A/B a decode-time setting.
+- **Scoring** — WER/CER against reference text, supplied either by typing what
+  was said or by reading a built-in passage the app already knows. The second
+  form is what makes accent comparison across speakers possible.
+- **Diagnostics** — RSS, CPU, threads, device memory, thermal throttle state,
+  battery draw; an endurance card (RAM trend, drain rate, throttled samples);
+  and a caption-latency breakdown that splits observed lag into VAD wait,
+  decode, and everything else. Exports as JSON.
+
+Interpretation and the optimization backlog built on it live in
+`MODEL_OPTIMIZATION_STRATEGY.md`.
 
 ## 7. Acceptance criteria (from ON_DEVICE_TRANSCRIPTION.md §18)
 

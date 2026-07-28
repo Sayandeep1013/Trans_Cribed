@@ -25,14 +25,17 @@ import '../models/model_catalog.dart';
 /// better than that, and the caller can compare the result to the input if it
 /// wants to warn.
 String sanitizeWhisperLanguage(Object? value) {
-  final code = (value as String?)?.trim().toLowerCase() ?? '';
+  // Type-tested rather than cast: `as String?` throws on a number, and a
+  // function whose entire job is "this can never blow up" must not have a
+  // shape of input that blows it up. JSON from disk can hold anything.
+  final code = value is String ? value.trim().toLowerCase() : '';
   return isWhisperLanguage(code) ? code : '';
 }
 
 /// `translate` and `transcribe` are the only tasks Whisper defines; anything
 /// else is logged and ignored by sherpa-onnx, so normalize it here.
 String sanitizeWhisperTask(Object? value) {
-  final task = (value as String?)?.trim().toLowerCase() ?? '';
+  final task = value is String ? value.trim().toLowerCase() : '';
   return task == 'translate' ? 'translate' : 'transcribe';
 }
 

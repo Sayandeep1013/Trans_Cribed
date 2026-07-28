@@ -119,7 +119,14 @@ class ModelSpec {
   final String displayName;
   final String description;
 
-  /// Approximate total download size, for the UI only.
+  /// Total download size in MB, summed from the actual published file sizes.
+  ///
+  /// Not "for the UI only" - the free-space preflight reserves against this, so
+  /// an understated figure lets a download start that cannot finish, which is
+  /// exactly the failure the preflight exists to prevent. Measured, never
+  /// estimated: the Moonshine entries were originally guessed at 170/75 MB and
+  /// are really 287/124 MB, because the two decoder files dominate and are
+  /// easy to overlook.
   final int approxMb;
   final EngineType type;
   final List<RemoteFile> files;
@@ -201,7 +208,7 @@ final ModelSpec moonshineTiny = ModelSpec(
   id: 'moonshine-tiny-en-int8',
   displayName: 'Moonshine Tiny (English)',
   description: 'Fastest, lowest RAM. Good for budget phones.',
-  approxMb: 75,
+  approxMb: 124,
   type: EngineType.moonshine,
   files: _moonshineFiles('tiny'),
   sourceUrl: _moonshineRepo('tiny'),
@@ -211,7 +218,7 @@ final ModelSpec moonshineBase = ModelSpec(
   id: 'moonshine-base-en-int8',
   displayName: 'Moonshine Base (English)',
   description: 'Balanced speed and accuracy. Recommended default.',
-  approxMb: 170,
+  approxMb: 287,
   type: EngineType.moonshine,
   files: _moonshineFiles('base'),
   sourceUrl: _moonshineRepo('base'),
@@ -224,7 +231,7 @@ final ModelSpec parakeetTdt06b = ModelSpec(
       'Highest accuracy (open-model leaderboard leader), and the only model '
       'here that supports hotwords. Heavy - needs a recent phone with 8 GB+ '
       'RAM.',
-  approxMb: 640,
+  approxMb: 661,
   type: EngineType.nemoTransducer,
   numThreads: 4,
   files: const [

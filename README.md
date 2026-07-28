@@ -10,9 +10,9 @@ Validates the engine from `ON_DEVICE_TRANSCRIPTION.md` before it is integrated i
 
 | Model | Download | Languages | Notes |
 |---|---|---|---|
-| Moonshine Base | ~170 MB | English | Recommended default |
-| Moonshine Tiny | ~75 MB | English | Fastest, lowest RAM |
-| NVIDIA Parakeet TDT 0.6B v2 | ~640 MB | English | Highest accuracy; the only model supporting hotwords. Needs 8 GB+ RAM |
+| Moonshine Base | ~287 MB | English | Recommended default |
+| Moonshine Tiny | ~124 MB | English | Fastest, lowest RAM |
+| NVIDIA Parakeet TDT 0.6B v2 | ~661 MB | English | Highest accuracy; the only model supporting hotwords. Needs 8 GB+ RAM |
 | Whisper Base | ~161 MB | **99** | Pick this for non-English meetings. Can also translate any of them to English |
 | Whisper Tiny | ~104 MB | **99** | Same, smaller and less accurate |
 | Whisper Base.en | ~161 MB | English | The incumbent (main app uses whisper.cpp), here as the baseline to beat |

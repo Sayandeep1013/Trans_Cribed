@@ -8,19 +8,23 @@ Validates the engine from `ON_DEVICE_TRANSCRIPTION.md` before it is integrated i
 
 ## Model catalog
 
-| Model | Download | Notes |
-|---|---|---|
-| Moonshine Base (en) | ~170 MB | Recommended default |
-| Moonshine Tiny (en) | ~75 MB | Fastest, lowest RAM |
-| NVIDIA Parakeet TDT 0.6B v2 | ~640 MB | Highest accuracy; the only model supporting hotwords. Needs 8 GB+ RAM |
-| Whisper Base.en | ~161 MB | The incumbent (main app uses whisper.cpp), here as the baseline to beat |
-| Whisper Tiny.en | ~104 MB | Same, smaller |
+| Model | Download | Languages | Notes |
+|---|---|---|---|
+| Moonshine Base | ~170 MB | English | Recommended default |
+| Moonshine Tiny | ~75 MB | English | Fastest, lowest RAM |
+| NVIDIA Parakeet TDT 0.6B v2 | ~640 MB | English | Highest accuracy; the only model supporting hotwords. Needs 8 GB+ RAM |
+| Whisper Base | ~161 MB | **99** | Pick this for non-English meetings. Can also translate any of them to English |
+| Whisper Tiny | ~104 MB | **99** | Same, smaller and less accurate |
+| Whisper Base.en | ~161 MB | English | The incumbent (main app uses whisper.cpp), here as the baseline to beat |
+| Whisper Tiny.en | ~104 MB | English | Same, smaller |
 
 Plus a shared ~2 MB Silero VAD, fetched once with the first model.
 
 All files come from the official k2-fsa distribution: per-model Hugging Face repos under [`csukuangfj`](https://huggingface.co/csukuangfj) (the sherpa-onnx maintainer), and the `asr-models` GitHub release for the VAD. The browsable index of everything available is <https://k2-fsa.github.io/sherpa/onnx/pretrained_models/index.html>. URLs are pinned at compile time — each model card in the app shows its source.
 
 > **Whisper is slower here than its size suggests.** Its encoder is fixed at 30 seconds, so every utterance is zero-padded to 30 s before inference — a 2-second reply costs the same as a 30-second one. Moonshine takes variable-length input and exists specifically to avoid that. Judge by measured RTF, not file size.
+
+> **Language is a property of the weights, not a setting.** Only the multilingual Whisper builds understand anything but English. The `.en` builds do not fail on other languages — sherpa-onnx skips the language step for them entirely, so they emit confident English-shaped nonsense instead. Moonshine and Parakeet are English-only across the board. The Lab tab shows the language controls only when the loaded model can actually use them.
 
 ## Build it (no local SDK needed — cloud-only)
 

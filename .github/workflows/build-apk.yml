@@ -24,13 +24,40 @@ jobs:
           channel: 'stable'
           cache: true
 
-      # Keep the auto-generated debug keystore stable across runs so APK
-      # updates install in place (no uninstall = downloaded models survive).
-      - name: Cache debug keystore (stable APK signature)
+      # Keep the debug signing key stable across runs so APK updates install in
+      # place (no uninstall = downloaded models survive).
+      #
+      # Caching whatever AGP generates does NOT work: AGP resolves the debug
+      # keystore through ANDROID_USER_HOME / ANDROID_SDK_HOME, which the runner
+      # points elsewhere, so ~/.android/debug.keystore never exists and the
+      # cache silently saves nothing ("Path Validation Error"). Instead we pin
+      # the location, create the key ourselves when the cache misses, and cache
+      # a file we know is there.
+      - name: Pin the Android user home
+        run: echo "ANDROID_USER_HOME=$HOME/.android" >> "$GITHUB_ENV"
+
+      - name: Restore debug keystore
         uses: actions/cache@v4
         with:
           path: ~/.android/debug.keystore
-          key: android-debug-keystore-v1
+          key: android-debug-keystore-v2
+
+      - name: Create debug keystore if the cache missed
+        run: |
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            echo "No cached keystore - generating one (signature changes once)."
+            keytool -genkeypair \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -keypass android \
+              -alias androiddebugkey \
+              -dname "CN=Android Debug,O=Android,C=US" \
+              -keyalg RSA -keysize 2048 -validity 10000
+          else
+            echo "Reusing the cached keystore - signature is unchanged."
+          fi
+          keytool -list -v -keystore "$HOME/.android/debug.keystore" \
+            -storepass android | grep -E 'SHA1|Alias'
 
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos

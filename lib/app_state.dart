@@ -496,12 +496,19 @@ class AppState extends ChangeNotifier {
         wavPath = '${dir.path}${Platform.pathSeparator}session_$stamp.wav';
       }
 
-      // The transcriber binds its WAV target at construction, so a session
-      // with a new path needs a fresh instance - cheap next to a model load,
-      // but it does mean re-preparing.
-      await _rebindTranscriber(spec, wavPath);
+      final transcriber = _transcriber;
+      if (transcriber == null) {
+        _fail('No engine loaded. Pick a model first.');
+        return;
+      }
+      // Point the already-warm engine at this session's file. Deliberately not
+      // a new transcriber: that would reload the model before every recording,
+      // which is exactly the "no visible wait" criterion we have to meet.
+      if (transcriber is SherpaOnnxTranscriber) {
+        transcriber.sessionWavPath = wavPath;
+      }
 
-      await _transcriber!.start();
+      await transcriber.start();
       // No foreground service by design (that shell lives in the main app), so
       // the screen must stay on or Android suspends capture.
       await WakelockPlus.enable();
@@ -523,42 +530,6 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       _fail('Could not start recording: $e');
     }
-  }
-
-  Future<void> _rebindTranscriber(ModelSpec spec, String? wavPath) async {
-    final current = _transcriber;
-    if (current is SherpaOnnxTranscriber &&
-        current.sessionWavPath == wavPath &&
-        current.isReady) {
-      return;
-    }
-
-    stage = 'Preparing engine…';
-    phase = Phase.preparing;
-    notifyListeners();
-
-    await _segmentSub?.cancel();
-    await _levelSub?.cancel();
-    await _speechSub?.cancel();
-    await current?.dispose();
-
-    final model = await store.installedFor(spec);
-    final next = SherpaOnnxTranscriber(
-      model: model,
-      options: options,
-      hotwordsFile: await _writeHotwordsFile(),
-      sessionWavPath: wavPath,
-    );
-    _wireStreams(next);
-    stats = await next.prepare(
-      onProgress: (s) {
-        stage = s;
-        notifyListeners();
-      },
-    );
-    _transcriber = next;
-    phase = Phase.ready;
-    notifyListeners();
   }
 
   Future<void> stopRecording() async {

@@ -42,7 +42,12 @@ class SherpaOnnxTranscriber implements Transcriber {
 
   /// When set, the session's raw audio is written here so it can be re-decoded
   /// by other models later. Null disables audio retention.
-  final String? sessionWavPath;
+  ///
+  /// Mutable on purpose: each session needs its own file, and the path is sent
+  /// to the isolate with the `start` command rather than baked in at
+  /// construction. Making it final would force a new transcriber - and so a
+  /// full model reload - before every single recording.
+  String? sessionWavPath;
 
   final MicCapture _mic = MicCapture();
 
